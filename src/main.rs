@@ -1,8 +1,11 @@
 
 extern crate csv; // for parsing BED
-use std::io;
-use std::error::Error;
 use std::cmp::{min, max};
+use std::collections::HashMap;
+use std::collections::hash_map::Entry::{Occupied, Vacant};
+use std::error::Error;
+use std::io;
+use std::time::Instant;
 
 type GenericError = Box<Error>;
 
@@ -63,7 +66,8 @@ fn traverse_recursion(
         end: usize,
         depth: usize,
         dfs: &mut usize) -> Option<usize> {
-    if info.is_empty() {
+
+    if start >= end {
         return None;
     }
 
@@ -184,16 +188,35 @@ fn compute_subtree_sizes<T>(nodes: &mut [IntervalNode<T>], root_idx: usize)
 }
 
 
+fn compute_tree_size<T>(nodes: &mut [IntervalNode<T>], root_idx: usize) -> usize
+        where T: std::marker::Copy {
+
+    let mut subtree_size = 1;
+
+    if let Some(left) = nodes[root_idx].left {
+        subtree_size += compute_tree_size(nodes, left);
+    }
+
+    if let Some(right) = nodes[root_idx].right {
+        subtree_size += compute_tree_size(nodes, right);
+    }
+
+    return subtree_size;
+}
+
+
 // put nodes in van Emde Boas order
 fn veb_order<T>(nodes: &mut [IntervalNode<T>])
         where T: std::marker::Copy {
-    println!("sorting nodes");
-    nodes.sort_unstable_by_key(|node| node.first);
-    println!("done.");
 
-    println!("traverse");
+    // it seems to not matter all that much how this is sorted
+    nodes.sort_unstable_by_key(|node| node.first);
+    // nodes.sort_unstable_by_key(|node| node.last);
+    // nodes.sort_unstable_by_key(|node| (node.first, node.last));
+    // nodes.sort_unstable_by_key(|node| (node.first, -node.last));
+    // nodes.sort_unstable_by_key(|node| (node.last + node.first)/2);
+
     let info = traverse(nodes.len());
-    println!("done.");
 
     let mut max_depth = 0;
     for info_i in &info {
@@ -205,13 +228,9 @@ fn veb_order<T>(nodes: &mut [IntervalNode<T>])
     let mut idxs: Vec<usize> = (0..nodes.len()).collect();
     let mut tmp: Vec<usize> = vec![0; nodes.len()];
 
-    println!("sort on dfs");
     idxs.sort_by_key(|i| info[*i].dfs);
-    println!("done");
 
-    println!("veb_order_recursion");
     veb_order_recursion(&mut idxs, &mut tmp, &info, 0, nodes.len(), 0, max_depth);
-    println!("done");
 
     // idxs is now a vEB -> sorted order map. Build the reverse here.
     let mut revidx = tmp;
@@ -242,6 +261,8 @@ fn veb_order<T>(nodes: &mut [IntervalNode<T>])
     nodes.copy_from_slice(&mut veb_nodes);
 
     compute_subtree_sizes(nodes, 0);
+
+    assert!(compute_tree_size(nodes, 0) == nodes.len());
 }
 
 
@@ -252,9 +273,14 @@ fn overlaps(first_a: i32, last_a: i32, first_b: i32, last_b: i32) -> bool {
 
 fn query_recursion(
         nodes: &[IntervalNode<()>], root_idx: usize, first: i32, last: i32,
-        count: &mut usize, overlap: &mut usize) {
+        count: &mut usize, overlap: &mut usize, visited: &mut usize) {
+    // println!("{} {:?} {:?} {} {}",
+        // root_idx, nodes[root_idx].left, nodes[root_idx].right,
+        // nodes[root_idx].first, nodes[root_idx].last);
+    *visited += 1;
     if overlaps(nodes[root_idx].first, nodes[root_idx].last, first, last) {
         *count += 1;
+        // println!("hit!")
         // *overlap +=
         //     (min(nodes[root_idx].last, last) -
         //     max(nodes[root_idx].first, first)) as usize;
@@ -264,7 +290,7 @@ fn query_recursion(
         if overlaps(
                 nodes[left].subtree_first, nodes[left].subtree_last,
                 first, last) {
-            query_recursion(nodes, left, first, last, count, overlap);
+            query_recursion(nodes, left, first, last, count, overlap, visited);
         }
     }
 
@@ -272,28 +298,90 @@ fn query_recursion(
         if overlaps(
                 nodes[right].subtree_first, nodes[right].subtree_last,
                 first, last) {
-            query_recursion(nodes, right, first, last, count, overlap);
+            query_recursion(nodes, right, first, last, count, overlap, visited);
         }
     }
+
+    // alternative check, using just subtree_last
+    // if first <= nodes[root_idx].subtree_last {
+    //     if last >= nodes[root_idx].first {
+    //         if first <= nodes[root_idx].last {
+    //             println!("hit!");
+    //             *count += 1;
+    //         }
+
+    //         if let Some(right) = nodes[root_idx].right {
+    //             query_recursion(nodes, right, first, last, count, overlap);
+    //         }
+    //     }
+
+    //     if let Some(left) = nodes[root_idx].left {
+    //         query_recursion(nodes, left, first, last, count, overlap);
+    //     }
+    // }
 }
 
 // super simple query which prints every overlap
-fn query(tree: &COITree<()>, first: i32, last: i32) -> (usize, usize) {
+fn query(tree: &COITree<()>, first: i32, last: i32) -> (usize, usize, usize) {
+    // println!("QUERY");
     let mut count = 0;
     let mut overlap = 0;
-    query_recursion(&tree.nodes, 0, first, last, &mut count, &mut overlap);
-    return (count, overlap);
+    let mut visited = 0;
+    query_recursion(
+        &tree.nodes, 0, first, last, &mut count, &mut overlap, &mut visited);
+    return (count, overlap, visited);
 }
 
 
-fn read_bed_file(path: &str) -> Result<COITree<()>, GenericError> {
-    let mut nodes: Vec<IntervalNode<()>> = Vec::new();
+
+// fn inlined_query(
+//         tree: &COITree<()>, stack: &mut Vec<usize>,
+//         first: i32, last: i32) -> (usize, usize) {
+//     let mut count = 0;
+//     let mut overlap = 0;
+//     let nodes = &tree.nodes;
+
+//     assert!(stack.is_empty());
+
+//     stack.push(0);
+//     while !stack.is_empty() {
+//         let root_idx = stack.pop().unwrap();
+//         if overlaps(nodes[root_idx].first, nodes[root_idx].last, first, last) {
+//             count += 1;
+//         }
+
+//         if let Some(left) = nodes[root_idx].left {
+//             if overlaps(
+//                     nodes[left].subtree_first, nodes[left].subtree_last,
+//                     first, last) {
+//                 stack.push(left);
+//             }
+//         }
+
+//         if let Some(right) = nodes[root_idx].right {
+//             if overlaps(
+//                     nodes[right].subtree_first, nodes[right].subtree_last,
+//                     first, last) {
+//                 stack.push(right);
+//             }
+//         }
+//     }
+
+//     return (count, overlap);
+// }
+
+
+fn read_bed_file(path: &str) -> Result<HashMap<String, COITree<()>>, GenericError> {
+    // let mut nodes: Vec<IntervalNode<()>> = Vec::new();
+
+    let mut nodes = HashMap::<String, Vec<IntervalNode<()>>>::new();
+
     let mut rdr = csv::ReaderBuilder::new()
         .delimiter(b'\t')
         .has_headers(false)
         .from_path(path)?;
 
-    println!("reading bed");
+    let now = Instant::now();
     for result in rdr.records() {
         let record = result?;
         if record.len() < 3 {
@@ -301,19 +389,31 @@ fn read_bed_file(path: &str) -> Result<COITree<()>, GenericError> {
                 io::Error::new(io::ErrorKind::Other, "Bed line too short")));
         }
 
-        // TODO: handle sequence: (by building multiple trees in a hashmap)
-
         let first: i32 = record[1].parse().unwrap();
         let mut last: i32 = record[2].parse().unwrap();
         last -= 1; // bed is end-exclusive
-        nodes.push(IntervalNode{
+
+        let node_arr = match nodes.entry(record[0].to_string()) {
+            Vacant(entry)   => entry.insert(Vec::new()),
+            Occupied(entry) => entry.into_mut()
+        };
+
+        node_arr.push(IntervalNode{
             first: first, last: last,
-            subtree_first: first, subtree_last: last,
+            subtree_first: first,
+            subtree_last: last,
             left: None, right: None, metadata: ()});
     }
-    println!("done.");
+    eprintln!("reading bed: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
-    return Ok(COITree::new(nodes));
+    let now = Instant::now();
+    let mut trees = HashMap::<String, COITree<()>>::new();
+    for (seqname, seqname_nodes) in nodes {
+        trees.insert(seqname, COITree::new(seqname_nodes));
+    }
+    eprintln!("veb_order: {}s", now.elapsed().as_millis() as f64 / 1000.0);
+
+    return Ok(trees);
 }
 
 
@@ -325,6 +425,11 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
         .has_headers(false)
         .from_path(filename_b)?;
 
+    // let mut stack: Vec<usize> = Vec::new();
+
+    let mut total_visits = 0;
+    let mut total_count = 0;
+    let now = Instant::now();
     for result in rdr.records() {
         let record = result?;
         if record.len() < 3 {
@@ -332,15 +437,33 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
                 io::Error::new(io::ErrorKind::Other, "Bed line too short")));
         }
 
-        let first: i32 = record[1].parse().unwrap();
-        let mut last: i32 = record[2].parse().unwrap();
-        last -= 1; // bed is end-exclusive
+        let mut count = 0;
+        let mut overlap = 0;
+        let mut visited = 0;
+        if let Some(seqname_tree) = tree.get(&record[0]) {
+            let first: i32 = record[1].parse().unwrap();
+            let mut last: i32 = record[2].parse().unwrap();
+            last -= 1; // bed is end-exclusive
 
-        let count_overlap = query(&tree, first, last);
+            let count_overlap = query(&seqname_tree, first, last);
+            count = count_overlap.0;
+            overlap = count_overlap.1;
+            visited = count_overlap.2;
+        }
+
+        // println!(
+        //     "{}\t{}\t{}\t{}\t{}\t{}",
+        //     &record[0], &record[1], &record[2], count, overlap,
+        //     count as f64 / visited as f64);
         println!(
-            "{}\t{}\t{}\t{}\t{}",
-            &record[0], &record[1], &record[2], count_overlap.0, count_overlap.1);
+            "{}\t{}\t{}\t{}",
+            &record[0], &record[1], &record[2], count);
+        total_visits += visited;
+        total_count += count;
     }
+    eprintln!("overlap: {}s", now.elapsed().as_millis() as f64 / 1000.0);
+    eprintln!("total overlaps: {}", total_count);
+    eprintln!("total visits: {}", total_visits);
 
     return Ok(());
 }
