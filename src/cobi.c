@@ -5,7 +5,27 @@
 #include <stdio.h>
 #include "cobi.h"
 
-void cobi_init(node_s* nodes, size_t numnodes);
+
+static int compare_intervals(const void* a_, const void* b_)
+{
+    node_s* a = (node_s*) a_;
+    node_s* b = (node_s*) b_;
+    return a->first < b->first ? -1 :
+           a->first > b->first ?  1 : 0;
+}
+
+void cobi_init(node_s* nodes, size_t n)
+{
+    // this is really slow, but that's ok for now
+    qsort(nodes, n, sizeof(node_s), compare_intervals);
+
+    // TODO: put in VeB order
+    veb_order();
+
+    // TODO: store left/right pointers
+
+    // TODO: add augmentation
+}
 
 
 // structure used when computing VeB ordering.
@@ -19,30 +39,12 @@ typedef struct reindex_s
 } reindex_s;
 
 
-static int compare_depth(const void* i_, const void* j_)
-{
-    reindex_s* i = (reindex_s*) i_;
-    reindex_s* j = (reindex_s*) j_;
-    return i->depth < j->depth ? -1 :
-           i->depth > j->depth ?  1 : 0;
-}
-
-
-static int compare_dfs(const void* i_, const void* j_)
-{
-    reindex_s* i = (reindex_s*) i_;
-    reindex_s* j = (reindex_s*) j_;
-    return i->dfs < j->dfs ? -1 :
-           i->dfs > j->dfs ?  1 : 0;
-}
-
-
+// recursively initialize the fields of the reindex tree by doing dfs on as
+// implicit bst.
 size_t init_reindex_subtree(
         reindex_s* idxs, size_t from, size_t to, size_t depth, size_t dfs)
 {
     if (from > to) return 0;
-
-    /*fprintf(stderr, "(%d, %d)\n", (int) from, (int) to);*/
 
     size_t root_idx = from + (to - from)/2;
     idxs[root_idx].depth = depth;
@@ -67,7 +69,8 @@ size_t init_reindex_subtree(
 // temporary space `tmp` at least as large as `tree`.
 // Returns the index of the last node in the left partition.
 // This is basically stable_partition in c++ stl.
-size_t depth_partition(reindex_s* tree, reindex_s* tmp, size_t n, uint32_t pivot)
+size_t stable_partition_by_depth(
+        reindex_s* tree, reindex_s* tmp, size_t n, uint32_t pivot)
 {
     // count elemnts <= pivot
     size_t left_size = 0;
@@ -102,7 +105,7 @@ void veb_order_recursion(
     }
 
     uint32_t pivot_depth = min_depth + (max_depth - min_depth)/2;
-    size_t top_size = depth_partition(tree, tmp, n, pivot_depth);
+    size_t top_size = stable_partition_by_depth(tree, tmp, n, pivot_depth);
 
     // recurse on top subtree
     veb_order_recursion(tree, tmp, top_size, min_depth, pivot_depth);
@@ -120,7 +123,7 @@ void veb_order_recursion(
 
 
 // compute veb order for a tree of size n
-void veb_order(size_t n)
+void veb_order(node_s* nodes, size_t n)
 {
     // initialized indexes
     reindex_s* idxs_tmp = malloc(sizeof(reindex_s) * n);
@@ -137,9 +140,26 @@ void veb_order(size_t n)
         if (idxs[i].depth > max_depth) max_depth = idxs[i].depth;
     }
     veb_order_recursion(idxs, idxs_tmp, n, 0, max_depth);
+    free(idxs_tmp);
 
     // now use this to reorder the actual tree
+    // too slow to do this in place. I guess we should allocate a new array.
+
+    node_t* veb_nodes = malloc(n * sizeof(node_s));
+    for (size_t i = 0; i < n; ++i) {
+        veb_nodes[i] = nodes[idxs[i].i];
+    }
+
+    // TODO: only problem is that there isn't an obvious way of now computing
+    // the left and right pointers. I think we need to store left and right
+    // pointers when we do dfs, then build a sorted idx -> veb idx map, then
+    // permute and update indexes.
+
+    // 'sorted idx -> left sorted idx' and 'sorted idx -> right sorted idx'
+    // could be two separate arrays. In fact, we should think about doing
+    // the veb reorder traversal with just an array of ints indexing dfs and
+    // and depth arrays.
     //
-    free(idxs);
+    // Or one array of structs, that is proxy-traversed.
 }
 
