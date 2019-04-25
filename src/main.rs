@@ -2,12 +2,12 @@
 extern crate csv; // for parsing BED
 use std::io;
 use std::error::Error;
-use std::cmp::max;
+use std::cmp::{min, max};
 
 type GenericError = Box<Error>;
 
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 struct IntervalNode<T> where T: std::marker::Copy
  {
     first: i32,
@@ -37,7 +37,7 @@ impl<T> COITree<T> where T: std::marker::Copy {
 
 
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 struct TraversalInfo {
     depth: usize,
     dfs: usize,
@@ -49,7 +49,8 @@ struct TraversalInfo {
 fn traverse(n: usize) -> Vec<TraversalInfo> {
     let mut info = vec![TraversalInfo{depth: 0, dfs: 0, left: None, right: None}; n];
     let mut dfs = 0;
-    traverse_recursion(&mut info, 0, &mut dfs);
+    let n = info.len();
+    traverse_recursion(&mut info, 0, n, 0, &mut dfs);
 
     return info;
 }
@@ -58,32 +59,31 @@ fn traverse(n: usize) -> Vec<TraversalInfo> {
 // dfs traversal of an implicit bst computing dfs number and depth.
 fn traverse_recursion(
         info: &mut [TraversalInfo],
+        start: usize,
+        end: usize,
         depth: usize,
         dfs: &mut usize) -> Option<usize> {
     if info.is_empty() {
         return None;
     }
 
-    let root_idx = info.len() / 2;
+    let root_idx = start + (end - start) / 2;
     info[root_idx].depth = depth;
     info[root_idx].dfs = *dfs;
     *dfs += 1;
     let mut left = None;
     let mut right = None;
 
-    if root_idx > 0 {
-        left = traverse_recursion(&mut info[..root_idx], depth+1, dfs);
+    if root_idx > start {
+        left = traverse_recursion(info, start, root_idx, depth+1, dfs);
     }
 
-    if root_idx < info.len()-1 {
-        right = traverse_recursion(&mut info[root_idx+1..], depth+1, dfs);
+    if root_idx + 1 < end {
+        right = traverse_recursion(info, root_idx+1, end, depth+1, dfs);
     }
 
     info[root_idx].left = left;
-    info[root_idx].right = match right {
-        Some(right_val) => Some(right_val + root_idx + 1),
-        None => None
-    };
+    info[root_idx].right = right;
 
     return Some(root_idx);
 }
@@ -169,13 +169,13 @@ fn compute_subtree_sizes<T>(nodes: &mut [IntervalNode<T>], root_idx: usize)
 
     if let Some(left) = nodes[root_idx].left {
         compute_subtree_sizes(nodes, left);
-        subtree_first = max(subtree_first, nodes[left].subtree_first);
+        subtree_first = min(subtree_first, nodes[left].subtree_first);
         subtree_last  = max(subtree_last, nodes[left].subtree_last);
     }
 
     if let Some(right) = nodes[root_idx].right {
         compute_subtree_sizes(nodes, right);
-        subtree_first = max(subtree_first, nodes[right].subtree_first);
+        subtree_first = min(subtree_first, nodes[right].subtree_first);
         subtree_last  = max(subtree_last, nodes[right].subtree_last);
     }
 
@@ -221,17 +221,17 @@ fn veb_order<T>(nodes: &mut [IntervalNode<T>])
 
     // but nodes in vEB order in a temporary vector
     let mut veb_nodes = vec![nodes[0]; nodes.len()];
-    for i in 1..nodes.len() {
+    for i in 0..nodes.len() {
         veb_nodes[i] = nodes[idxs[i]];
 
         // update left and right pointers
-        veb_nodes[i].left = if let Some(left) = veb_nodes[i].left {
+        veb_nodes[i].left = if let Some(left) = info[idxs[i]].left {
             Some(revidx[left])
         } else {
             None
         };
 
-        veb_nodes[i].right = if let Some(right) = veb_nodes[i].right {
+        veb_nodes[i].right = if let Some(right) = info[idxs[i]].right {
             Some(revidx[right])
         } else {
             None
@@ -242,6 +242,47 @@ fn veb_order<T>(nodes: &mut [IntervalNode<T>])
     nodes.copy_from_slice(&mut veb_nodes);
 
     compute_subtree_sizes(nodes, 0);
+}
+
+
+fn overlaps(first_a: i32, last_a: i32, first_b: i32, last_b: i32) -> bool {
+    return first_a <= last_b && last_a >= first_b;
+}
+
+
+fn query_recursion(
+        nodes: &[IntervalNode<()>], root_idx: usize, first: i32, last: i32,
+        count: &mut usize, overlap: &mut usize) {
+    if overlaps(nodes[root_idx].first, nodes[root_idx].last, first, last) {
+        *count += 1;
+        // *overlap +=
+        //     (min(nodes[root_idx].last, last) -
+        //     max(nodes[root_idx].first, first)) as usize;
+    }
+
+    if let Some(left) = nodes[root_idx].left {
+        if overlaps(
+                nodes[left].subtree_first, nodes[left].subtree_last,
+                first, last) {
+            query_recursion(nodes, left, first, last, count, overlap);
+        }
+    }
+
+    if let Some(right) = nodes[root_idx].right {
+        if overlaps(
+                nodes[right].subtree_first, nodes[right].subtree_last,
+                first, last) {
+            query_recursion(nodes, right, first, last, count, overlap);
+        }
+    }
+}
+
+// super simple query which prints every overlap
+fn query(tree: &COITree<()>, first: i32, last: i32) -> (usize, usize) {
+    let mut count = 0;
+    let mut overlap = 0;
+    query_recursion(&tree.nodes, 0, first, last, &mut count, &mut overlap);
+    return (count, overlap);
 }
 
 
@@ -263,7 +304,8 @@ fn read_bed_file(path: &str) -> Result<COITree<()>, GenericError> {
         // TODO: handle sequence: (by building multiple trees in a hashmap)
 
         let first: i32 = record[1].parse().unwrap();
-        let last: i32 = record[1].parse().unwrap();
+        let mut last: i32 = record[2].parse().unwrap();
+        last -= 1; // bed is end-exclusive
         nodes.push(IntervalNode{
             first: first, last: last,
             subtree_first: first, subtree_last: last,
@@ -275,18 +317,45 @@ fn read_bed_file(path: &str) -> Result<COITree<()>, GenericError> {
 }
 
 
+fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericError> {
+    let tree = read_bed_file(filename_a)?;
+
+    let mut rdr = csv::ReaderBuilder::new()
+        .delimiter(b'\t')
+        .has_headers(false)
+        .from_path(filename_b)?;
+
+    for result in rdr.records() {
+        let record = result?;
+        if record.len() < 3 {
+            return Err(GenericError::from(
+                io::Error::new(io::ErrorKind::Other, "Bed line too short")));
+        }
+
+        let first: i32 = record[1].parse().unwrap();
+        let mut last: i32 = record[2].parse().unwrap();
+        last -= 1; // bed is end-exclusive
+
+        let count_overlap = query(&tree, first, last);
+        println!(
+            "{}\t{}\t{}\t{}\t{}",
+            &record[0], &record[1], &record[2], count_overlap.0, count_overlap.1);
+    }
+
+    return Ok(());
+}
+
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 {
+    if args.len() < 3 {
         println!("Must specify file name.");
         std::process::exit(1);
     }
 
-    let result = read_bed_file(&args[1]);
+    let result = query_bed_files(&args[1], &args[2]);
     if let Err(err) = result {
         println!("error: {}", err)
     }
-
-    // TODO: stream other bed file and intersect
 }
 
