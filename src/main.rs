@@ -19,8 +19,10 @@ struct IntervalNode<T> where T: std::marker::Copy
     subtree_first: i32,
     subtree_last: i32,
 
-    left: Option<usize>,
-    right: Option<usize>,
+    // left: Option<usize>,
+    // right: Option<usize>,
+    left: usize,
+    right: usize,
 
     metadata: T,
 }
@@ -44,13 +46,13 @@ impl<T> COITree<T> where T: std::marker::Copy {
 struct TraversalInfo {
     depth: usize,
     dfs: usize,
-    left: Option<usize>,
-    right: Option<usize>,
+    left: usize,
+    right: usize,
 }
 
 
 fn traverse(n: usize) -> Vec<TraversalInfo> {
-    let mut info = vec![TraversalInfo{depth: 0, dfs: 0, left: None, right: None}; n];
+    let mut info = vec![TraversalInfo{depth: 0, dfs: 0, left: 0, right: 0}; n];
     let mut dfs = 0;
     let n = info.len();
     traverse_recursion(&mut info, 0, n, 0, &mut dfs);
@@ -65,18 +67,18 @@ fn traverse_recursion(
         start: usize,
         end: usize,
         depth: usize,
-        dfs: &mut usize) -> Option<usize> {
+        dfs: &mut usize) -> usize {
 
     if start >= end {
-        return None;
+        return usize::max_value();
     }
 
     let root_idx = start + (end - start) / 2;
     info[root_idx].depth = depth;
     info[root_idx].dfs = *dfs;
     *dfs += 1;
-    let mut left = None;
-    let mut right = None;
+    let mut left = usize::max_value();
+    let mut right = usize::max_value();
 
     if root_idx > start {
         left = traverse_recursion(info, start, root_idx, depth+1, dfs);
@@ -89,7 +91,7 @@ fn traverse_recursion(
     info[root_idx].left = left;
     info[root_idx].right = right;
 
-    return Some(root_idx);
+    return root_idx;
 }
 
 // partition (in the quicksort sense) indexes according do the corresponding depths
@@ -171,13 +173,15 @@ fn compute_subtree_sizes<T>(nodes: &mut [IntervalNode<T>], root_idx: usize)
     let mut subtree_first = nodes[root_idx].first;
     let mut subtree_last = nodes[root_idx].last;
 
-    if let Some(left) = nodes[root_idx].left {
+    let left = nodes[root_idx].left;
+    if left < usize::max_value() {
         compute_subtree_sizes(nodes, left);
         subtree_first = min(subtree_first, nodes[left].subtree_first);
         subtree_last  = max(subtree_last, nodes[left].subtree_last);
     }
 
-    if let Some(right) = nodes[root_idx].right {
+    let right = nodes[root_idx].right;
+    if right < usize::max_value() {
         compute_subtree_sizes(nodes, right);
         subtree_first = min(subtree_first, nodes[right].subtree_first);
         subtree_last  = max(subtree_last, nodes[right].subtree_last);
@@ -193,11 +197,13 @@ fn compute_tree_size<T>(nodes: &mut [IntervalNode<T>], root_idx: usize) -> usize
 
     let mut subtree_size = 1;
 
-    if let Some(left) = nodes[root_idx].left {
+    let left = nodes[root_idx].left;
+    if left < usize::max_value() {
         subtree_size += compute_tree_size(nodes, left);
     }
 
-    if let Some(right) = nodes[root_idx].right {
+    let right = nodes[root_idx].right;
+    if right < usize::max_value() {
         subtree_size += compute_tree_size(nodes, right);
     }
 
@@ -244,16 +250,19 @@ fn veb_order<T>(nodes: &mut [IntervalNode<T>])
         veb_nodes[i] = nodes[idxs[i]];
 
         // update left and right pointers
-        veb_nodes[i].left = if let Some(left) = info[idxs[i]].left {
-            Some(revidx[left])
+
+        let left = info[idxs[i]].left;
+        veb_nodes[i].left = if left < usize::max_value() {
+            revidx[left]
         } else {
-            None
+            left
         };
 
-        veb_nodes[i].right = if let Some(right) = info[idxs[i]].right {
-            Some(revidx[right])
+        let right = info[idxs[i]].right;
+        veb_nodes[i].right = if right < usize::max_value() {
+            revidx[right]
         } else {
-            None
+            right
         };
     }
 
@@ -286,7 +295,8 @@ fn query_recursion(
         //     max(nodes[root_idx].first, first)) as usize;
     }
 
-    if let Some(left) = nodes[root_idx].left {
+    let left = nodes[root_idx].left;
+    if left < usize::max_value() {
         if overlaps(
                 nodes[left].subtree_first, nodes[left].subtree_last,
                 first, last) {
@@ -294,7 +304,8 @@ fn query_recursion(
         }
     }
 
-    if let Some(right) = nodes[root_idx].right {
+    let right = nodes[root_idx].right;
+    if right < usize::max_value() {
         if overlaps(
                 nodes[right].subtree_first, nodes[right].subtree_last,
                 first, last) {
@@ -402,7 +413,7 @@ fn read_bed_file(path: &str) -> Result<HashMap<String, COITree<()>>, GenericErro
             first: first, last: last,
             subtree_first: first,
             subtree_last: last,
-            left: None, right: None, metadata: ()});
+            left: usize::max_value(), right: usize::max_value(), metadata: ()});
     }
     eprintln!("reading bed: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
