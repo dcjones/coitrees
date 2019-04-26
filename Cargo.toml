@@ -5,4 +5,3 @@ authors = ["Daniel C. Jones <dcjones@cs.washington.edu>"]
 edition = "2018"
 
 [dependencies]
-csv = "*"

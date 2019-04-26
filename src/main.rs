@@ -1,11 +1,12 @@
 
-extern crate csv; // for parsing BED
 use std::cmp::{min, max};
 use std::collections::HashMap;
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::error::Error;
 use std::io;
 use std::time::Instant;
+use std::fs::File;
+use std::io::{BufRead, BufReader, Write};
 
 type GenericError = Box<Error>;
 
@@ -13,11 +14,11 @@ type GenericError = Box<Error>;
 #[derive(Copy, Clone, Debug)]
 struct IntervalNode<T> where T: std::marker::Copy
  {
-    first: i32,
-    last: i32,
-
     subtree_first: i32,
     subtree_last: i32,
+
+    first: i32,
+    last: i32,
 
     left: u32,
     right: u32,
@@ -385,24 +386,21 @@ fn read_bed_file(path: &str) -> Result<HashMap<String, COITree<()>>, GenericErro
 
     let mut nodes = HashMap::<String, Vec<IntervalNode<()>>>::new();
 
-    let mut rdr = csv::ReaderBuilder::new()
-        .delimiter(b'\t')
-        .has_headers(false)
-        .from_path(path)?;
-
     let now = Instant::now();
-    for result in rdr.records() {
-        let record = result?;
-        if record.len() < 3 {
-            return Err(GenericError::from(
-                io::Error::new(io::ErrorKind::Other, "Bed line too short")));
-        }
 
-        let first: i32 = record[1].parse().unwrap();
-        let mut last: i32 = record[2].parse().unwrap();
-        last -= 1; // bed is end-exclusive
+    // 6.13s
+    let file = File::open(path)?;
+    let mut rdr = BufReader::new(file);
+    let mut line = String::new();
+    let mut line_count = 0;
+    while rdr.read_line(&mut line).unwrap() > 0 {
+        line.pop(); // remove newline
+        let mut cols = line.split('\t');
+        let seqname = cols.next().unwrap();
+        let first = cols.next().unwrap().parse::<i32>().unwrap();
+        let last = cols.next().unwrap().parse::<i32>().unwrap() - 1;
 
-        let node_arr = match nodes.entry(record[0].to_string()) {
+        let node_arr = match nodes.entry(seqname.to_string()) {
             Vacant(entry)   => entry.insert(Vec::new()),
             Occupied(entry) => entry.into_mut()
         };
@@ -412,8 +410,12 @@ fn read_bed_file(path: &str) -> Result<HashMap<String, COITree<()>>, GenericErro
             subtree_first: first,
             subtree_last: last,
             left: u32::max_value(), right: u32::max_value(), metadata: ()});
+        line_count += 1;
+        line.clear();
     }
     eprintln!("reading bed: {}s", now.elapsed().as_millis() as f64 / 1000.0);
+    eprintln!("lines: {}", line_count);
+    eprintln!("sequences: {}", nodes.len());
 
     let now = Instant::now();
     let mut trees = HashMap::<String, COITree<()>>::new();
@@ -429,30 +431,31 @@ fn read_bed_file(path: &str) -> Result<HashMap<String, COITree<()>>, GenericErro
 fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericError> {
     let tree = read_bed_file(filename_a)?;
 
-    let mut rdr = csv::ReaderBuilder::new()
-        .delimiter(b'\t')
-        .has_headers(false)
-        .from_path(filename_b)?;
-
-    // let mut stack: Vec<usize> = Vec::new();
+    let file = File::open(filename_b)?;
+    let mut rdr = BufReader::new(file);
+    let mut line = String::new();
 
     let mut total_visits = 0;
     let mut total_count = 0;
     let now = Instant::now();
-    for result in rdr.records() {
-        let record = result?;
-        if record.len() < 3 {
-            return Err(GenericError::from(
-                io::Error::new(io::ErrorKind::Other, "Bed line too short")));
-        }
+
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+
+    while rdr.read_line(&mut line).unwrap() > 0 {
+        line.pop(); // remove newline
+        let mut cols = line.split('\t');
+        let seqname = cols.next().unwrap();
+        let first_str = cols.next().unwrap();
+        let last_str = cols.next().unwrap();
+
+        let first = first_str.parse::<i32>().unwrap();
+        let last = last_str.parse::<i32>().unwrap() - 1;
 
         let mut count = 0;
         let mut overlap = 0;
         let mut visited = 0;
-        if let Some(seqname_tree) = tree.get(&record[0]) {
-            let first: i32 = record[1].parse().unwrap();
-            let mut last: i32 = record[2].parse().unwrap();
-            last -= 1; // bed is end-exclusive
+        if let Some(seqname_tree) = tree.get(seqname) {
 
             let count_overlap = query(&seqname_tree, first, last);
             count = count_overlap.0;
@@ -460,16 +463,16 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
             visited = count_overlap.2;
         }
 
-        // println!(
-        //     "{}\t{}\t{}\t{}\t{}\t{}",
-        //     &record[0], &record[1], &record[2], count, overlap,
-        //     count as f64 / visited as f64);
-        println!(
+        writeln!(
+            out,
             "{}\t{}\t{}\t{}",
-            &record[0], &record[1], &record[2], count);
+            seqname, first_str, last_str, count)?;
+
         total_visits += visited;
         total_count += count;
+        line.clear();
     }
+
     eprintln!("overlap: {}s", now.elapsed().as_millis() as f64 / 1000.0);
     eprintln!("total overlaps: {}", total_count);
     eprintln!("total visits: {}", total_visits);
