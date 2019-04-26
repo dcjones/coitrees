@@ -1,13 +1,14 @@
 
 use std::cmp::{min, max};
-use std::collections::HashMap;
-use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::error::Error;
 use std::io;
 use std::str;
 use std::time::Instant;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
+
+extern crate fnv;
+use fnv::FnvHashMap;
 
 type GenericError = Box<Error>;
 
@@ -490,8 +491,8 @@ fn parse_bed_line(line: &[u8]) -> (&str, &str, &str, i32, i32) {
 }
 
 
-fn read_bed_file(path: &str) -> Result<HashMap<String, COITree<()>>, GenericError> {
-    let mut nodes = HashMap::<String, Vec<IntervalNode<()>>>::new();
+fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<()>>, GenericError> {
+    let mut nodes = FnvHashMap::<String, Vec<IntervalNode<()>>>::default();
 
     let now = Instant::now();
 
@@ -500,7 +501,7 @@ fn read_bed_file(path: &str) -> Result<HashMap<String, COITree<()>>, GenericErro
     let mut line_count = 0;
     let mut line = Vec::new();
     while rdr.read_until(b'\n', &mut line).unwrap() > 0 {
-        let (seqname, first_str, last_str, first, last) =
+        let (seqname, _, _, first, last) =
             parse_bed_line(&line);
 
         let node_arr = if let Some(node_arr) = nodes.get_mut(seqname) {
@@ -527,7 +528,7 @@ fn read_bed_file(path: &str) -> Result<HashMap<String, COITree<()>>, GenericErro
     eprintln!("sequences: {}", nodes.len());
 
     let now = Instant::now();
-    let mut trees = HashMap::<String, COITree<()>>::new();
+    let mut trees = FnvHashMap::<String, COITree<()>>::default();
     for (seqname, seqname_nodes) in nodes {
         trees.insert(seqname, COITree::new(seqname_nodes));
     }
@@ -539,7 +540,6 @@ fn read_bed_file(path: &str) -> Result<HashMap<String, COITree<()>>, GenericErro
 
 fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericError> {
     let tree = read_bed_file(filename_a)?;
-    return Ok(());
 
     let file = File::open(filename_b)?;
     let mut rdr = BufReader::new(file);
