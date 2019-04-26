@@ -457,6 +457,39 @@ fn query(tree: &COITree<()>, first: i32, last: i32) -> (usize, usize, usize) {
 // }
 
 
+fn parse_bed_line(line: &[u8]) -> (&str, &str, &str, i32, i32) {
+    let mut p = 0;
+    while p < line.len()-1 && line[p] != b'\t' {
+        p += 1;
+    }
+    let seqname = unsafe {
+        str::from_utf8_unchecked(&line[..p])
+    };
+    p += 1;
+    let p0 = p;
+
+    while p < line.len()-1 && line[p] != b'\t' {
+        p += 1;
+    }
+    let first_str = unsafe {
+        str::from_utf8_unchecked(&line[p0..p])
+    };
+    let first = first_str.parse::<i32>().unwrap();
+    p += 1;
+    let p0 = p;
+
+    while p < line.len()-1 && line[p] != b'\t' {
+        p += 1;
+    }
+    let last_str = unsafe {
+        str::from_utf8_unchecked(&line[p0..p])
+    };
+    let last = last_str.parse::<i32>().unwrap() - 1;
+
+    return (seqname, first_str, last_str, first, last);
+}
+
+
 fn read_bed_file(path: &str) -> Result<HashMap<String, COITree<()>>, GenericError> {
     let mut nodes = HashMap::<String, Vec<IntervalNode<()>>>::new();
 
@@ -467,25 +500,8 @@ fn read_bed_file(path: &str) -> Result<HashMap<String, COITree<()>>, GenericErro
     let mut line_count = 0;
     let mut line = Vec::new();
     while rdr.read_until(b'\n', &mut line).unwrap() > 0 {
-        let mut p = 0;
-        while p < line.len()-1 && line[p] != b'\t' {
-            p += 1;
-        }
-        let seqname = str::from_utf8(&line[..p]).unwrap();
-        p += 1;
-        let p0 = p;
-
-        while p < line.len()-1 && line[p] != b'\t' {
-            p += 1;
-        }
-        let first = str::from_utf8(&line[p0..p]).unwrap().parse::<i32>().unwrap();
-        p += 1;
-        let p0 = p;
-
-        while p < line.len()-1 && line[p] != b'\t' {
-            p += 1;
-        }
-        let last = str::from_utf8(&line[p0..p]).unwrap().parse::<i32>().unwrap() - 1;
+        let (seqname, first_str, last_str, first, last) =
+            parse_bed_line(&line);
 
         let node_arr = if let Some(node_arr) = nodes.get_mut(seqname) {
             node_arr
@@ -523,6 +539,7 @@ fn read_bed_file(path: &str) -> Result<HashMap<String, COITree<()>>, GenericErro
 
 fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericError> {
     let tree = read_bed_file(filename_a)?;
+    return Ok(());
 
     let file = File::open(filename_b)?;
     let mut rdr = BufReader::new(file);
@@ -536,27 +553,8 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
     let mut out = stdout.lock();
 
     while rdr.read_until(b'\n', &mut line).unwrap() > 0 {
-        let mut p = 0;
-        while p < line.len()-1 && line[p] != b'\t' {
-            p += 1;
-        }
-        let seqname = str::from_utf8(&line[..p]).unwrap();
-        p += 1;
-        let p0 = p;
-
-        while p < line.len()-1 && line[p] != b'\t' {
-            p += 1;
-        }
-        let first_str = str::from_utf8(&line[p0..p]).unwrap();
-        let first = first_str.parse::<i32>().unwrap();
-        p += 1;
-        let p0 = p;
-
-        while p < line.len()-1 && line[p] != b'\t' {
-            p += 1;
-        }
-        let last_str = str::from_utf8(&line[p0..p]).unwrap();
-        let last = last_str.parse::<i32>().unwrap() - 1;
+        let (seqname, first_str, last_str, first, last) =
+            parse_bed_line(&line);
 
         let mut count = 0;
         let mut overlap = 0;
