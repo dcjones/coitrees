@@ -487,9 +487,10 @@ fn read_bed_file(path: &str) -> Result<HashMap<String, COITree<()>>, GenericErro
         }
         let last = str::from_utf8(&line[p0..p]).unwrap().parse::<i32>().unwrap() - 1;
 
-        let node_arr = match nodes.entry(seqname.to_string()) {
-            Vacant(entry)   => entry.insert(Vec::new()),
-            Occupied(entry) => entry.into_mut()
+        let node_arr = if let Some(node_arr) = nodes.get_mut(seqname) {
+            node_arr
+        } else {
+            nodes.entry(seqname.to_string()).or_insert(Vec::new())
         };
 
         node_arr.push(IntervalNode{
@@ -500,8 +501,8 @@ fn read_bed_file(path: &str) -> Result<HashMap<String, COITree<()>>, GenericErro
             right: u32::max_value(),
             simple: false,
             metadata: ()});
-        line_count += 1;
 
+        line_count += 1;
         line.clear();
     }
 
