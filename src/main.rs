@@ -343,41 +343,49 @@ fn query(tree: &COITree<()>, first: i32, last: i32) -> (usize, usize, usize) {
 }
 
 
-
+// This is about the same as the recursive version but relies on a fixed
+// size stack space.
 // fn inlined_query(
-//         tree: &COITree<()>, stack: &mut Vec<usize>,
-//         first: i32, last: i32) -> (usize, usize) {
+//         tree: &COITree<()>,
+//         first: i32, last: i32) -> (usize, usize, usize) {
 //     let mut count = 0;
 //     let mut overlap = 0;
+//     let mut visited = 0;
 //     let nodes = &tree.nodes;
+//     let stack: &mut [u32]  = &mut [0; 64];
+//     let mut p: isize = 0;
 
-//     assert!(stack.is_empty());
+//     while p >= 0 {
+//         let root_idx = stack[p as usize] as usize;
+//         p -= 1;
 
-//     stack.push(0);
-//     while !stack.is_empty() {
-//         let root_idx = stack.pop().unwrap();
+//         visited += 1;
 //         if overlaps(nodes[root_idx].first, nodes[root_idx].last, first, last) {
 //             count += 1;
 //         }
 
-//         if let Some(left) = nodes[root_idx].left {
+//         let left = nodes[root_idx].left as usize;
+//         if left < u32::max_value() as usize {
 //             if overlaps(
 //                     nodes[left].subtree_first, nodes[left].subtree_last,
 //                     first, last) {
-//                 stack.push(left);
+//                 p += 1;
+//                 stack[p as usize] = left as u32;
 //             }
 //         }
 
-//         if let Some(right) = nodes[root_idx].right {
+//         let right = nodes[root_idx].right as usize;
+//         if right < u32::max_value() as usize {
 //             if overlaps(
 //                     nodes[right].subtree_first, nodes[right].subtree_last,
 //                     first, last) {
-//                 stack.push(right);
+//                 p += 1;
+//                 stack[p as usize] = right as u32;
 //             }
 //         }
 //     }
 
-//     return (count, overlap);
+//     return (count, overlap, visited);
 // }
 
 
@@ -395,22 +403,24 @@ fn read_bed_file(path: &str) -> Result<HashMap<String, COITree<()>>, GenericErro
     let mut line_count = 0;
     while rdr.read_line(&mut line).unwrap() > 0 {
         line.pop(); // remove newline
-        let mut cols = line.split('\t');
-        let seqname = cols.next().unwrap();
-        let first = cols.next().unwrap().parse::<i32>().unwrap();
-        let last = cols.next().unwrap().parse::<i32>().unwrap() - 1;
+        {
+            let mut cols = line.split('\t');
+            let seqname = cols.next().unwrap();
+            let first = cols.next().unwrap().parse::<i32>().unwrap();
+            let last = cols.next().unwrap().parse::<i32>().unwrap() - 1;
 
-        let node_arr = match nodes.entry(seqname.to_string()) {
-            Vacant(entry)   => entry.insert(Vec::new()),
-            Occupied(entry) => entry.into_mut()
-        };
+            let node_arr = match nodes.entry(seqname.to_string()) {
+                Vacant(entry)   => entry.insert(Vec::new()),
+                Occupied(entry) => entry.into_mut()
+            };
 
-        node_arr.push(IntervalNode{
-            first: first, last: last,
-            subtree_first: first,
-            subtree_last: last,
-            left: u32::max_value(), right: u32::max_value(), metadata: ()});
-        line_count += 1;
+            node_arr.push(IntervalNode{
+                first: first, last: last,
+                subtree_first: first,
+                subtree_last: last,
+                left: u32::max_value(), right: u32::max_value(), metadata: ()});
+            line_count += 1;
+        }
         line.clear();
     }
     eprintln!("reading bed: {}s", now.elapsed().as_millis() as f64 / 1000.0);
@@ -444,32 +454,34 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
 
     while rdr.read_line(&mut line).unwrap() > 0 {
         line.pop(); // remove newline
-        let mut cols = line.split('\t');
-        let seqname = cols.next().unwrap();
-        let first_str = cols.next().unwrap();
-        let last_str = cols.next().unwrap();
+        {
+            let mut cols = line.split('\t');
+            let seqname = cols.next().unwrap();
+            let first_str = cols.next().unwrap();
+            let last_str = cols.next().unwrap();
 
-        let first = first_str.parse::<i32>().unwrap();
-        let last = last_str.parse::<i32>().unwrap() - 1;
+            let first = first_str.parse::<i32>().unwrap();
+            let last = last_str.parse::<i32>().unwrap() - 1;
 
-        let mut count = 0;
-        let mut overlap = 0;
-        let mut visited = 0;
-        if let Some(seqname_tree) = tree.get(seqname) {
+            let mut count = 0;
+            let mut overlap = 0;
+            let mut visited = 0;
+            if let Some(seqname_tree) = tree.get(seqname) {
 
-            let count_overlap = query(&seqname_tree, first, last);
-            count = count_overlap.0;
-            overlap = count_overlap.1;
-            visited = count_overlap.2;
+                let count_overlap = query(&seqname_tree, first, last);
+                count = count_overlap.0;
+                overlap = count_overlap.1;
+                visited = count_overlap.2;
+            }
+
+            writeln!(
+                out,
+                "{}\t{}\t{}\t{}",
+                seqname, first_str, last_str, count)?;
+
+            total_visits += visited;
+            total_count += count;
         }
-
-        writeln!(
-            out,
-            "{}\t{}\t{}\t{}",
-            seqname, first_str, last_str, count)?;
-
-        total_visits += visited;
-        total_count += count;
         line.clear();
     }
 
