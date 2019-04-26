@@ -19,10 +19,8 @@ struct IntervalNode<T> where T: std::marker::Copy
     subtree_first: i32,
     subtree_last: i32,
 
-    // left: Option<usize>,
-    // right: Option<usize>,
-    left: usize,
-    right: usize,
+    left: u32,
+    right: u32,
 
     metadata: T,
 }
@@ -173,15 +171,15 @@ fn compute_subtree_sizes<T>(nodes: &mut [IntervalNode<T>], root_idx: usize)
     let mut subtree_first = nodes[root_idx].first;
     let mut subtree_last = nodes[root_idx].last;
 
-    let left = nodes[root_idx].left;
-    if left < usize::max_value() {
+    let left = nodes[root_idx].left as usize;
+    if left < u32::max_value() as usize {
         compute_subtree_sizes(nodes, left);
         subtree_first = min(subtree_first, nodes[left].subtree_first);
         subtree_last  = max(subtree_last, nodes[left].subtree_last);
     }
 
-    let right = nodes[root_idx].right;
-    if right < usize::max_value() {
+    let right = nodes[root_idx].right as usize;
+    if right < u32::max_value() as usize {
         compute_subtree_sizes(nodes, right);
         subtree_first = min(subtree_first, nodes[right].subtree_first);
         subtree_last  = max(subtree_last, nodes[right].subtree_last);
@@ -197,13 +195,13 @@ fn compute_tree_size<T>(nodes: &mut [IntervalNode<T>], root_idx: usize) -> usize
 
     let mut subtree_size = 1;
 
-    let left = nodes[root_idx].left;
-    if left < usize::max_value() {
+    let left = nodes[root_idx].left as usize;
+    if left < u32::max_value() as usize {
         subtree_size += compute_tree_size(nodes, left);
     }
 
-    let right = nodes[root_idx].right;
-    if right < usize::max_value() {
+    let right = nodes[root_idx].right as usize;
+    if right < u32::max_value() as usize {
         subtree_size += compute_tree_size(nodes, right);
     }
 
@@ -251,16 +249,16 @@ fn veb_order<T>(nodes: &mut [IntervalNode<T>])
 
         // update left and right pointers
 
-        let left = info[idxs[i]].left;
-        veb_nodes[i].left = if left < usize::max_value() {
-            revidx[left]
+        let left = info[idxs[i]].left as u32;
+        veb_nodes[i].left = if left < u32::max_value() {
+            revidx[left as usize] as u32
         } else {
             left
         };
 
-        let right = info[idxs[i]].right;
-        veb_nodes[i].right = if right < usize::max_value() {
-            revidx[right]
+        let right = info[idxs[i]].right as u32;
+        veb_nodes[i].right = if right < u32::max_value() {
+            revidx[right as usize] as u32
         } else {
             right
         };
@@ -295,8 +293,8 @@ fn query_recursion(
         //     max(nodes[root_idx].first, first)) as usize;
     }
 
-    let left = nodes[root_idx].left;
-    if left < usize::max_value() {
+    let left = nodes[root_idx].left as usize;
+    if left < u32::max_value() as usize {
         if overlaps(
                 nodes[left].subtree_first, nodes[left].subtree_last,
                 first, last) {
@@ -304,8 +302,8 @@ fn query_recursion(
         }
     }
 
-    let right = nodes[root_idx].right;
-    if right < usize::max_value() {
+    let right = nodes[root_idx].right as usize;
+    if right < u32::max_value() as usize {
         if overlaps(
                 nodes[right].subtree_first, nodes[right].subtree_last,
                 first, last) {
@@ -413,7 +411,7 @@ fn read_bed_file(path: &str) -> Result<HashMap<String, COITree<()>>, GenericErro
             first: first, last: last,
             subtree_first: first,
             subtree_last: last,
-            left: usize::max_value(), right: usize::max_value(), metadata: ()});
+            left: u32::max_value(), right: u32::max_value(), metadata: ()});
     }
     eprintln!("reading bed: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
