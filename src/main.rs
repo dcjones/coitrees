@@ -18,7 +18,7 @@ type GenericError = Box<Error>;
 
 // small subtrees at the bottom of the tree are stored in sorted order
 // This gives the upper bound on the size of such subtrees.
-const SIMPLE_SUBTREE_CUTOFF: usize = 16;
+const SIMPLE_SUBTREE_CUTOFF: usize = 32;
 
 
 #[derive(Copy, Clone, Debug)]
@@ -168,12 +168,6 @@ fn veb_order_recursion<T>(
         return;
     }
 
-    // eprintln!("{} {} {} {} {}",
-    //     start, end,
-    //     childless,
-    //     info[idxs[start]].depth,
-    //     info[idxs[start]].subtree_size);
-
     // small subtrees are just put in sorted order
     if childless && info[idxs[start]].subtree_size <= SIMPLE_SUBTREE_CUTOFF {
         assert!(n == info[idxs[start]].subtree_size);
@@ -310,7 +304,7 @@ fn veb_order<T>(nodes: &mut [IntervalNode<T>])
     for i in 0..nodes.len() {
         veb_nodes[i] = nodes[idxs[i]];
 
-        if info[idxs[i]].subtree_size <= SIMPLE_SUBTREE_CUTOFF {
+        if info[idxs[i]].simple {
             veb_nodes[i].simple = true;
             veb_nodes[i].left = u32::max_value();
             veb_nodes[i].right = info[idxs[i]].subtree_size as u32;
@@ -335,6 +329,8 @@ fn veb_order<T>(nodes: &mut [IntervalNode<T>])
     // copy reordered nodes back to the original vector
     nodes.copy_from_slice(&mut veb_nodes);
     compute_subtree_sizes(nodes, 0);
+
+    assert!(compute_tree_size(nodes, 0) == nodes.len());
 }
 
 
@@ -346,22 +342,27 @@ fn overlaps(first_a: i32, last_a: i32, first_b: i32, last_b: i32) -> bool {
 fn query_recursion(
         nodes: &[IntervalNode<()>], root_idx: usize, first: i32, last: i32,
         count: &mut usize, overlap: &mut usize, visited: &mut usize) {
-    // println!("{} {:?} {:?} {} {}",
-        // root_idx, nodes[root_idx].left, nodes[root_idx].right,
-        // nodes[root_idx].first, nodes[root_idx].last);
+    // eprintln!("{} {:?} {:?} {} {} {}",
+    //     root_idx, nodes[root_idx].left, nodes[root_idx].right,
+    //     nodes[root_idx].first, nodes[root_idx].last,  nodes[root_idx].simple);
 
     let node = &nodes[root_idx];
-
     *visited += 1;
     if overlaps(node.first, node.last, first, last) {
+        // eprintln!("hit!");
         *count += 1;
     }
 
     if node.simple {
         for k in 1..node.right as usize {
             let node = &nodes[root_idx+k];
+            // eprintln!("  {} {:?} {:?} {} {} {}",
+            //     root_idx+k, node.left, node.right,
+            //     node.first, node.last,  node.simple);
             if overlaps(node.first, node.last, first, last) {
+                // eprintln!("  hit!");
                 *count += 1;
+                *visited += 1;
             }
         }
     } else {
@@ -383,24 +384,6 @@ fn query_recursion(
             }
         }
     }
-
-    // alternative check, using just subtree_last
-    // if first <= nodes[root_idx].subtree_last {
-    //     if last >= nodes[root_idx].first {
-    //         if first <= nodes[root_idx].last {
-    //             println!("hit!");
-    //             *count += 1;
-    //         }
-
-    //         if let Some(right) = nodes[root_idx].right {
-    //             query_recursion(nodes, right, first, last, count, overlap);
-    //         }
-    //     }
-
-    //     if let Some(left) = nodes[root_idx].left {
-    //         query_recursion(nodes, left, first, last, count, overlap);
-    //     }
-    // }
 }
 
 // super simple query which prints every overlap
@@ -552,8 +535,8 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
     let mut total_count = 0;
     let now = Instant::now();
 
-    let stdout = io::stdout();
-    let mut out = stdout.lock();
+    // let stdout = io::stdout();
+    // let mut out = stdout.lock();
 
     while rdr.read_until(b'\n', &mut line).unwrap() > 0 {
         let (seqname, first_str, last_str, first, last) =
@@ -570,11 +553,17 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
             visited = count_overlap.2;
         }
 
-        out.write(&line[..line.len()-1])?;
+        // out.write(&line[..line.len()-1])?;
         // writeln!(out, "\t{}", count)?;
+
+        // unfortunately printing in c is  quite a bit faster than rust
         unsafe {
+            let linelen = line.len();
+            line[linelen-1] = b'\0';
             libc::printf(
-                b"%u\n\0".as_ptr() as *const i8, count as u32);
+                b"%s\t%u\n\0".as_ptr() as *const i8,
+                line.as_ptr() as *const i8,
+                count as u32);
         }
 
         total_visits += visited;
