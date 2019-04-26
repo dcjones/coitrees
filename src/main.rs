@@ -11,17 +11,29 @@ use std::io::{BufRead, BufReader, Write};
 type GenericError = Box<Error>;
 
 
+// small subtrees at the bottom of the tree are stored in sorted order
+// This gives the upper bound on the size of such subtrees.
+const SIMPLE_SUBTREE_CUTOFF: usize = 16;
+
+
 #[derive(Copy, Clone, Debug)]
 struct IntervalNode<T> where T: std::marker::Copy
  {
+    // subtree interval
     subtree_first: i32,
     subtree_last: i32,
 
+    // interval
     first: i32,
     last: i32,
 
+    // when `simple` is false, these are pointers to children
+    // when `simple` is true, left has no meaning, and right
+    // is the number of nodes in the sequence.
     left: u32,
     right: u32,
+
+    simple: bool,
 
     metadata: T,
 }
@@ -45,13 +57,16 @@ impl<T> COITree<T> where T: std::marker::Copy {
 struct TraversalInfo {
     depth: usize,
     dfs: usize,
+    subtree_size: usize,
     left: usize,
     right: usize,
+    simple: bool // set by veb_order_recursion
 }
 
 
 fn traverse(n: usize) -> Vec<TraversalInfo> {
-    let mut info = vec![TraversalInfo{depth: 0, dfs: 0, left: 0, right: 0}; n];
+    let mut info = vec![TraversalInfo{
+        depth: 0, dfs: 0, subtree_size: 0, left: 0, right: 0, simple: false}; n];
     let mut dfs = 0;
     let n = info.len();
     traverse_recursion(&mut info, 0, n, 0, &mut dfs);
@@ -66,10 +81,10 @@ fn traverse_recursion(
         start: usize,
         end: usize,
         depth: usize,
-        dfs: &mut usize) -> usize {
+        dfs: &mut usize) -> (usize, usize) {
 
     if start >= end {
-        return usize::max_value();
+        return (usize::max_value(), 0);
     }
 
     let root_idx = start + (end - start) / 2;
@@ -78,19 +93,27 @@ fn traverse_recursion(
     *dfs += 1;
     let mut left = usize::max_value();
     let mut right = usize::max_value();
+    let mut subtree_size = 1;
 
     if root_idx > start {
-        left = traverse_recursion(info, start, root_idx, depth+1, dfs);
+        let (left_, left_subtree_size) =
+            traverse_recursion(info, start, root_idx, depth+1, dfs);
+        left = left_;
+        subtree_size += left_subtree_size;
     }
 
     if root_idx + 1 < end {
-        right = traverse_recursion(info, root_idx+1, end, depth+1, dfs);
+        let (right_, right_subtree_size) =
+            traverse_recursion(info, root_idx+1, end, depth+1, dfs);
+        right = right_;
+        subtree_size += right_subtree_size;
     }
 
+    info[root_idx].subtree_size = subtree_size;
     info[root_idx].left = left;
     info[root_idx].right = right;
 
-    return root_idx;
+    return (root_idx, subtree_size)
 }
 
 // partition (in the quicksort sense) indexes according do the corresponding depths
@@ -125,15 +148,31 @@ fn stable_partition_by_depth(
 
 
 // recursively reorder indexes to put it in vEB order.
-fn veb_order_recursion(
+fn veb_order_recursion<T>(
         idxs: &mut [usize], tmp: &mut [usize],
-        info: &[TraversalInfo],
+        info: &mut [TraversalInfo],
+        nodes: &[IntervalNode<T>],
         start: usize, end: usize,
-        min_depth: usize, max_depth: usize) {
+        childless: bool, // true if no nodes below the subtree indicated start..end
+        min_depth: usize, max_depth: usize)
+        where T: std::marker::Copy {
     let n = (start..end).len();
     if min_depth == max_depth {
         // TODO: probably could relax this and return if size is <= 3
         assert!(n == 1);
+        return;
+    }
+
+    // eprintln!("{} {} {} {} {}",
+    //     start, end,
+    //     childless,
+    //     info[idxs[start]].depth,
+    //     info[idxs[start]].subtree_size);
+
+    // small subtrees are just put in sorted order
+    if childless && info[idxs[start]].subtree_size <= SIMPLE_SUBTREE_CUTOFF {
+        assert!(n == info[idxs[start]].subtree_size);
+        info[idxs[start]].simple = true;
         return;
     }
 
@@ -143,7 +182,8 @@ fn veb_order_recursion(
 
     // recurse on top subtree
     veb_order_recursion(
-        idxs, tmp, info, start, start + top_size, min_depth, pivot_depth);
+        idxs, tmp, info, nodes, start,
+        start + top_size, false, min_depth, pivot_depth);
 
     // find and recurse on bottom subtrees
     let bottom_subtree_depth = pivot_depth + 1;
@@ -160,7 +200,8 @@ fn veb_order_recursion(
             j += 1;
         }
         veb_order_recursion(
-            idxs, tmp, info, i, j, bottom_subtree_depth, subtree_max_depth);
+            idxs, tmp, info, nodes, i, j, childless,
+            bottom_subtree_depth, subtree_max_depth);
         i = j;
     }
 }
@@ -169,21 +210,29 @@ fn veb_order_recursion(
 // traverse the tree filling the subtree_first and subtree_last fields.
 fn compute_subtree_sizes<T>(nodes: &mut [IntervalNode<T>], root_idx: usize)
         where T: std::marker::Copy {
+
     let mut subtree_first = nodes[root_idx].first;
     let mut subtree_last = nodes[root_idx].last;
 
-    let left = nodes[root_idx].left as usize;
-    if left < u32::max_value() as usize {
-        compute_subtree_sizes(nodes, left);
-        subtree_first = min(subtree_first, nodes[left].subtree_first);
-        subtree_last  = max(subtree_last, nodes[left].subtree_last);
-    }
+    if nodes[root_idx].simple {
+        for k in 1..nodes[root_idx].right as usize {
+            subtree_first = min(subtree_first, nodes[root_idx+k].first);
+            subtree_last = max(subtree_last, nodes[root_idx+k].last);
+        }
+    } else {
+        let left = nodes[root_idx].left as usize;
+        if left < u32::max_value() as usize {
+            compute_subtree_sizes(nodes, left);
+            subtree_first = min(subtree_first, nodes[left].subtree_first);
+            subtree_last  = max(subtree_last, nodes[left].subtree_last);
+        }
 
-    let right = nodes[root_idx].right as usize;
-    if right < u32::max_value() as usize {
-        compute_subtree_sizes(nodes, right);
-        subtree_first = min(subtree_first, nodes[right].subtree_first);
-        subtree_last  = max(subtree_last, nodes[right].subtree_last);
+        let right = nodes[root_idx].right as usize;
+        if right < u32::max_value() as usize {
+            compute_subtree_sizes(nodes, right);
+            subtree_first = min(subtree_first, nodes[right].subtree_first);
+            subtree_last  = max(subtree_last, nodes[right].subtree_last);
+        }
     }
 
     nodes[root_idx].subtree_first = subtree_first;
@@ -191,19 +240,23 @@ fn compute_subtree_sizes<T>(nodes: &mut [IntervalNode<T>], root_idx: usize)
 }
 
 
-fn compute_tree_size<T>(nodes: &mut [IntervalNode<T>], root_idx: usize) -> usize
+fn compute_tree_size<T>(nodes: &[IntervalNode<T>], root_idx: usize) -> usize
         where T: std::marker::Copy {
 
     let mut subtree_size = 1;
 
-    let left = nodes[root_idx].left as usize;
-    if left < u32::max_value() as usize {
-        subtree_size += compute_tree_size(nodes, left);
-    }
+    if nodes[root_idx].simple {
+        subtree_size = nodes[root_idx].right as usize;
+    } else {
+        let left = nodes[root_idx].left as usize;
+        if left < u32::max_value() as usize {
+            subtree_size += compute_tree_size(nodes, left);
+        }
 
-    let right = nodes[root_idx].right as usize;
-    if right < u32::max_value() as usize {
-        subtree_size += compute_tree_size(nodes, right);
+        let right = nodes[root_idx].right as usize;
+        if right < u32::max_value() as usize {
+            subtree_size += compute_tree_size(nodes, right);
+        }
     }
 
     return subtree_size;
@@ -221,7 +274,7 @@ fn veb_order<T>(nodes: &mut [IntervalNode<T>])
     // nodes.sort_unstable_by_key(|node| (node.first, -node.last));
     // nodes.sort_unstable_by_key(|node| (node.last + node.first)/2);
 
-    let info = traverse(nodes.len());
+    let mut info = traverse(nodes.len());
 
     let mut max_depth = 0;
     for info_i in &info {
@@ -233,10 +286,16 @@ fn veb_order<T>(nodes: &mut [IntervalNode<T>])
     let mut idxs: Vec<usize> = (0..nodes.len()).collect();
     let mut tmp: Vec<usize> = vec![0; nodes.len()];
 
+    let now = Instant::now();
     idxs.sort_by_key(|i| info[*i].dfs);
+    eprintln!("  sort on dfs: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
-    veb_order_recursion(&mut idxs, &mut tmp, &info, 0, nodes.len(), 0, max_depth);
+    let now = Instant::now();
+    veb_order_recursion(
+        &mut idxs, &mut tmp, &mut info, &nodes, 0, nodes.len(), true, 0, max_depth);
+    eprintln!("  veb_order_recursion: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
+    let now = Instant::now();
     // idxs is now a vEB -> sorted order map. Build the reverse here.
     let mut revidx = tmp;
     for (i, j) in idxs.iter().enumerate() {
@@ -248,29 +307,42 @@ fn veb_order<T>(nodes: &mut [IntervalNode<T>])
     for i in 0..nodes.len() {
         veb_nodes[i] = nodes[idxs[i]];
 
-        // update left and right pointers
-
-        let left = info[idxs[i]].left as u32;
-        veb_nodes[i].left = if left < u32::max_value() {
-            revidx[left as usize] as u32
+        if info[idxs[i]].subtree_size <= SIMPLE_SUBTREE_CUTOFF {
+            veb_nodes[i].simple = true;
+            veb_nodes[i].left = u32::max_value();
+            veb_nodes[i].right = info[idxs[i]].subtree_size as u32;
         } else {
-            left
-        };
+            // update left and right pointers
+            let left = info[idxs[i]].left as u32;
+            veb_nodes[i].left = if left < u32::max_value() {
+                revidx[left as usize] as u32
+            } else {
+                left
+            };
 
-        let right = info[idxs[i]].right as u32;
-        veb_nodes[i].right = if right < u32::max_value() {
-            revidx[right as usize] as u32
-        } else {
-            right
-        };
+            let right = info[idxs[i]].right as u32;
+            veb_nodes[i].right = if right < u32::max_value() {
+                revidx[right as usize] as u32
+            } else {
+                right
+            };
+        }
     }
 
     // copy reordered nodes back to the original vector
     nodes.copy_from_slice(&mut veb_nodes);
 
     compute_subtree_sizes(nodes, 0);
+    eprintln!("  reordering nodes: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
-    assert!(compute_tree_size(nodes, 0) == nodes.len());
+    // for &node in &*nodes {
+    //     eprintln!("{} {} {} {} {}",
+    //         node.first, node.last, node.simple, node.left, node.right);
+    // }
+    // eprintln!("nodes.len() = {}", nodes.len());
+    // eprintln!("compute_tree_size(nodes, 0) = {}", compute_tree_size(nodes, 0));
+
+    // assert!(compute_tree_size(nodes, 0) == nodes.len());
 }
 
 
@@ -285,30 +357,38 @@ fn query_recursion(
     // println!("{} {:?} {:?} {} {}",
         // root_idx, nodes[root_idx].left, nodes[root_idx].right,
         // nodes[root_idx].first, nodes[root_idx].last);
+
+    let node = &nodes[root_idx];
+
     *visited += 1;
-    if overlaps(nodes[root_idx].first, nodes[root_idx].last, first, last) {
+    if overlaps(node.first, node.last, first, last) {
         *count += 1;
-        // println!("hit!")
-        // *overlap +=
-        //     (min(nodes[root_idx].last, last) -
-        //     max(nodes[root_idx].first, first)) as usize;
     }
 
-    let left = nodes[root_idx].left as usize;
-    if left < u32::max_value() as usize {
-        if overlaps(
-                nodes[left].subtree_first, nodes[left].subtree_last,
-                first, last) {
-            query_recursion(nodes, left, first, last, count, overlap, visited);
+    if node.simple {
+        for k in 1..node.right as usize {
+            let node = &nodes[root_idx+k];
+            if overlaps(node.first, node.last, first, last) {
+                *count += 1;
+            }
         }
-    }
+    } else {
+        let left = node.left as usize;
+        if left < u32::max_value() as usize {
+            if overlaps(
+                    nodes[left].subtree_first, nodes[left].subtree_last,
+                    first, last) {
+                query_recursion(nodes, left, first, last, count, overlap, visited);
+            }
+        }
 
-    let right = nodes[root_idx].right as usize;
-    if right < u32::max_value() as usize {
-        if overlaps(
-                nodes[right].subtree_first, nodes[right].subtree_last,
-                first, last) {
-            query_recursion(nodes, right, first, last, count, overlap, visited);
+        let right = node.right as usize;
+        if right < u32::max_value() as usize {
+            if overlaps(
+                    nodes[right].subtree_first, nodes[right].subtree_last,
+                    first, last) {
+                query_recursion(nodes, right, first, last, count, overlap, visited);
+            }
         }
     }
 
@@ -418,7 +498,10 @@ fn read_bed_file(path: &str) -> Result<HashMap<String, COITree<()>>, GenericErro
                 first: first, last: last,
                 subtree_first: first,
                 subtree_last: last,
-                left: u32::max_value(), right: u32::max_value(), metadata: ()});
+                left: u32::max_value(),
+                right: u32::max_value(),
+                simple: false,
+                metadata: ()});
             line_count += 1;
         }
         line.clear();
@@ -427,12 +510,14 @@ fn read_bed_file(path: &str) -> Result<HashMap<String, COITree<()>>, GenericErro
     eprintln!("lines: {}", line_count);
     eprintln!("sequences: {}", nodes.len());
 
-    let now = Instant::now();
+    // let now = Instant::now();
     let mut trees = HashMap::<String, COITree<()>>::new();
     for (seqname, seqname_nodes) in nodes {
+        let now = Instant::now();
         trees.insert(seqname, COITree::new(seqname_nodes));
+        eprintln!("veb_order: {}s", now.elapsed().as_millis() as f64 / 1000.0);
     }
-    eprintln!("veb_order: {}s", now.elapsed().as_millis() as f64 / 1000.0);
+    // eprintln!("veb_order: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
     return Ok(trees);
 }
