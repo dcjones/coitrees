@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::error::Error;
 use std::io;
+use std::str;
 use std::time::Instant;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
@@ -457,42 +458,53 @@ fn query(tree: &COITree<()>, first: i32, last: i32) -> (usize, usize, usize) {
 
 
 fn read_bed_file(path: &str) -> Result<HashMap<String, COITree<()>>, GenericError> {
-    // let mut nodes: Vec<IntervalNode<()>> = Vec::new();
-
     let mut nodes = HashMap::<String, Vec<IntervalNode<()>>>::new();
 
     let now = Instant::now();
 
-    // 6.13s
     let file = File::open(path)?;
     let mut rdr = BufReader::new(file);
-    let mut line = String::new();
     let mut line_count = 0;
-    while rdr.read_line(&mut line).unwrap() > 0 {
-        line.pop(); // remove newline
-        {
-            let mut cols = line.split('\t');
-            let seqname = cols.next().unwrap();
-            let first = cols.next().unwrap().parse::<i32>().unwrap();
-            let last = cols.next().unwrap().parse::<i32>().unwrap() - 1;
-
-            let node_arr = match nodes.entry(seqname.to_string()) {
-                Vacant(entry)   => entry.insert(Vec::new()),
-                Occupied(entry) => entry.into_mut()
-            };
-
-            node_arr.push(IntervalNode{
-                first: first, last: last,
-                subtree_first: first,
-                subtree_last: last,
-                left: u32::max_value(),
-                right: u32::max_value(),
-                simple: false,
-                metadata: ()});
-            line_count += 1;
+    let mut line = Vec::new();
+    while rdr.read_until(b'\n', &mut line).unwrap() > 0 {
+        let mut p = 0;
+        while p < line.len()-1 && line[p] != b'\t' {
+            p += 1;
         }
+        let seqname = str::from_utf8(&line[..p]).unwrap();
+        p += 1;
+        let p0 = p;
+
+        while p < line.len()-1 && line[p] != b'\t' {
+            p += 1;
+        }
+        let first = str::from_utf8(&line[p0..p]).unwrap().parse::<i32>().unwrap();
+        p += 1;
+        let p0 = p;
+
+        while p < line.len()-1 && line[p] != b'\t' {
+            p += 1;
+        }
+        let last = str::from_utf8(&line[p0..p]).unwrap().parse::<i32>().unwrap() - 1;
+
+        let node_arr = match nodes.entry(seqname.to_string()) {
+            Vacant(entry)   => entry.insert(Vec::new()),
+            Occupied(entry) => entry.into_mut()
+        };
+
+        node_arr.push(IntervalNode{
+            first: first, last: last,
+            subtree_first: first,
+            subtree_last: last,
+            left: u32::max_value(),
+            right: u32::max_value(),
+            simple: false,
+            metadata: ()});
+        line_count += 1;
+
         line.clear();
     }
+
     eprintln!("reading bed: {}s", now.elapsed().as_millis() as f64 / 1000.0);
     eprintln!("lines: {}", line_count);
     eprintln!("sequences: {}", nodes.len());
@@ -513,7 +525,7 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
 
     let file = File::open(filename_b)?;
     let mut rdr = BufReader::new(file);
-    let mut line = String::new();
+    let mut line = Vec::new();
 
     let mut total_visits = 0;
     let mut total_count = 0;
@@ -522,36 +534,48 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
-    while rdr.read_line(&mut line).unwrap() > 0 {
-        line.pop(); // remove newline
-        {
-            let mut cols = line.split('\t');
-            let seqname = cols.next().unwrap();
-            let first_str = cols.next().unwrap();
-            let last_str = cols.next().unwrap();
-
-            let first = first_str.parse::<i32>().unwrap();
-            let last = last_str.parse::<i32>().unwrap() - 1;
-
-            let mut count = 0;
-            let mut overlap = 0;
-            let mut visited = 0;
-            if let Some(seqname_tree) = tree.get(seqname) {
-
-                let count_overlap = query(&seqname_tree, first, last);
-                count = count_overlap.0;
-                overlap = count_overlap.1;
-                visited = count_overlap.2;
-            }
-
-            writeln!(
-                out,
-                "{}\t{}\t{}\t{}",
-                seqname, first_str, last_str, count)?;
-
-            total_visits += visited;
-            total_count += count;
+    while rdr.read_until(b'\n', &mut line).unwrap() > 0 {
+        let mut p = 0;
+        while p < line.len()-1 && line[p] != b'\t' {
+            p += 1;
         }
+        let seqname = str::from_utf8(&line[..p]).unwrap();
+        p += 1;
+        let p0 = p;
+
+        while p < line.len()-1 && line[p] != b'\t' {
+            p += 1;
+        }
+        let first_str = str::from_utf8(&line[p0..p]).unwrap();
+        let first = first_str.parse::<i32>().unwrap();
+        p += 1;
+        let p0 = p;
+
+        while p < line.len()-1 && line[p] != b'\t' {
+            p += 1;
+        }
+        let last_str = str::from_utf8(&line[p0..p]).unwrap();
+        let last = last_str.parse::<i32>().unwrap() - 1;
+
+        let mut count = 0;
+        let mut overlap = 0;
+        let mut visited = 0;
+        if let Some(seqname_tree) = tree.get(seqname) {
+
+            let count_overlap = query(&seqname_tree, first, last);
+            count = count_overlap.0;
+            overlap = count_overlap.1;
+            visited = count_overlap.2;
+        }
+
+        writeln!(
+            out,
+            "{}\t{}\t{}\t{}",
+            seqname, first_str, last_str, count)?;
+
+        total_visits += visited;
+        total_count += count;
+
         line.clear();
     }
 
