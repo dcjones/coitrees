@@ -286,16 +286,14 @@ fn veb_order<T>(nodes: &mut [IntervalNode<T>])
     let mut idxs: Vec<usize> = (0..nodes.len()).collect();
     let mut tmp: Vec<usize> = vec![0; nodes.len()];
 
-    let now = Instant::now();
-    idxs.sort_by_key(|i| info[*i].dfs);
-    eprintln!("  sort on dfs: {}s", now.elapsed().as_millis() as f64 / 1000.0);
+    for i in &idxs {
+        tmp[info[*i].dfs] = *i;
+    }
+    idxs.copy_from_slice(&mut tmp);
 
-    let now = Instant::now();
     veb_order_recursion(
         &mut idxs, &mut tmp, &mut info, &nodes, 0, nodes.len(), true, 0, max_depth);
-    eprintln!("  veb_order_recursion: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
-    let now = Instant::now();
     // idxs is now a vEB -> sorted order map. Build the reverse here.
     let mut revidx = tmp;
     for (i, j) in idxs.iter().enumerate() {
@@ -331,18 +329,7 @@ fn veb_order<T>(nodes: &mut [IntervalNode<T>])
 
     // copy reordered nodes back to the original vector
     nodes.copy_from_slice(&mut veb_nodes);
-
     compute_subtree_sizes(nodes, 0);
-    eprintln!("  reordering nodes: {}s", now.elapsed().as_millis() as f64 / 1000.0);
-
-    // for &node in &*nodes {
-    //     eprintln!("{} {} {} {} {}",
-    //         node.first, node.last, node.simple, node.left, node.right);
-    // }
-    // eprintln!("nodes.len() = {}", nodes.len());
-    // eprintln!("compute_tree_size(nodes, 0) = {}", compute_tree_size(nodes, 0));
-
-    // assert!(compute_tree_size(nodes, 0) == nodes.len());
 }
 
 
@@ -510,14 +497,12 @@ fn read_bed_file(path: &str) -> Result<HashMap<String, COITree<()>>, GenericErro
     eprintln!("lines: {}", line_count);
     eprintln!("sequences: {}", nodes.len());
 
-    // let now = Instant::now();
+    let now = Instant::now();
     let mut trees = HashMap::<String, COITree<()>>::new();
     for (seqname, seqname_nodes) in nodes {
-        let now = Instant::now();
         trees.insert(seqname, COITree::new(seqname_nodes));
-        eprintln!("veb_order: {}s", now.elapsed().as_millis() as f64 / 1000.0);
     }
-    // eprintln!("veb_order: {}s", now.elapsed().as_millis() as f64 / 1000.0);
+    eprintln!("veb_order: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
     return Ok(trees);
 }
