@@ -6,9 +6,12 @@ use std::str;
 use std::time::Instant;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
+use std::fmt::Display;
 
 extern crate fnv;
 use fnv::FnvHashMap;
+
+extern crate libc;
 
 type GenericError = Box<Error>;
 
@@ -567,10 +570,12 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
             visited = count_overlap.2;
         }
 
-        writeln!(
-            out,
-            "{}\t{}\t{}\t{}",
-            seqname, first_str, last_str, count)?;
+        out.write(&line[..line.len()-1])?;
+        // writeln!(out, "\t{}", count)?;
+        unsafe {
+            libc::printf(
+                b"%u\n\0".as_ptr() as *const i8, count as u32);
+        }
 
         total_visits += visited;
         total_count += count;
