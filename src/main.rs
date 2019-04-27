@@ -7,6 +7,7 @@ use std::time::Instant;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::fmt::Display;
+use std::ptr;
 
 extern crate fnv;
 use fnv::FnvHashMap;
@@ -258,13 +259,78 @@ fn compute_tree_size<T>(nodes: &[IntervalNode<T>], root_idx: usize) -> usize
 }
 
 
+fn radix_sort_nodes<T>(nodes: &mut [IntervalNode<T>], tmp: &mut [IntervalNode<T>])
+        where T: std::marker::Copy {
+
+    let mut max_first = 0;
+    for node in &*nodes {
+        max_first = max(max_first, node.first);
+    }
+
+    let mut count = 0;
+    let n = nodes.len();
+
+    const R: usize = 16;
+    const K: usize = 0xffff+1;
+    const MASK: i32 = 0xffff;
+
+    let mut shift: usize = 0;
+    // let mut radix_counts: [u32; K] = [0; K];
+    let mut radix_counts: Vec<u32> = vec![0; K];
+
+    let mut from = nodes;
+    let mut to   = tmp;
+    while count < 32/R {
+        for i in 0..K {
+            radix_counts[i] = 0;
+        }
+
+        for i in 0..n {
+            radix_counts[((from[i].first >> shift) & MASK) as usize] += 1;
+        }
+
+        // make counts cumulative
+        for i in 1..K {
+            radix_counts[i] += radix_counts[i-1];
+        }
+
+        // change counts to offsets
+        for i in 0..K-1 {
+            radix_counts[K-1-i] = radix_counts[K-2-i];
+        }
+        radix_counts[0] = 0;
+
+        for i in 0..n {
+            let radix = ((from[i].first >> shift) & MASK) as usize;
+            to[radix_counts[radix] as usize] = from[i];
+            radix_counts[radix] += 1;
+        }
+
+        count += 1;
+        shift += R;
+
+        let swap_tmp = from;
+        from = to;
+        to = swap_tmp;
+    }
+
+    // only needed if we do an odd number of iterations
+    // if count % 2 == 1 {
+    //     to.copy_from_slice(from);
+    // }
+}
+
+
+
 // put nodes in van Emde Boas order
 fn veb_order<T>(nodes: &mut [IntervalNode<T>])
         where T: std::marker::Copy {
 
     // let now = Instant::now();
     // it seems to not matter all that much how this is sorted
-    nodes.sort_unstable_by_key(|node| node.first);
+    // nodes.sort_unstable_by_key(|node| node.first);
+    let mut veb_nodes = vec![nodes[0]; nodes.len()];
+    radix_sort_nodes(nodes, &mut veb_nodes);
     // nodes.sort_unstable_by_key(|node| node.last);
     // nodes.sort_unstable_by_key(|node| (node.first, node.last));
     // nodes.sort_unstable_by_key(|node| (node.first, -node.last));
@@ -303,7 +369,6 @@ fn veb_order<T>(nodes: &mut [IntervalNode<T>])
     }
 
     // but nodes in vEB order in a temporary vector
-    let mut veb_nodes = vec![nodes[0]; nodes.len()];
     for i in 0..nodes.len() {
         veb_nodes[i] = nodes[idxs[i]];
 
@@ -491,6 +556,7 @@ fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<()>>, GenericE
             node_arr
         } else {
             nodes.entry(seqname.to_string()).or_insert(Vec::new())
+            // nodes.entry(seqname.to_string()).or_insert(Vec::with_capacity(100))
         };
 
         node_arr.push(IntervalNode{
