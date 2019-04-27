@@ -127,28 +127,25 @@ fn stable_partition_by_depth(
         idxs: &mut [usize], tmp: &mut [usize],
         info: &[TraversalInfo], pivot: usize,
         start: usize, end: usize) -> usize {
-    // count elements <= pivot
-    let mut left_size = 0;
-    for i in start..end {
-        if info[idxs[i]].depth <= pivot {
-            left_size += 1;
-        }
-    }
 
     let mut l = start;
-    let mut r = start + left_size;
     for i in start..end {
         if info[idxs[i]].depth <= pivot {
             tmp[l] = idxs[i];
-            l += 1
-        } else {
+            l += 1;
+        }
+    }
+
+    let mut r = l;
+    for i in start..end {
+        if info[idxs[i]].depth > pivot {
             tmp[r] = idxs[i];
             r += 1;
         }
     }
 
     idxs[start..end].copy_from_slice(&tmp[start..end]);
-    return left_size;
+    return l - start;
 }
 
 
@@ -162,16 +159,15 @@ fn veb_order_recursion<T>(
         min_depth: usize, max_depth: usize)
         where T: std::marker::Copy {
     let n = (start..end).len();
-    if min_depth == max_depth {
-        // TODO: probably could relax this and return if size is <= 3
-        assert!(n == 1);
-        return;
-    }
 
     // small subtrees are just put in sorted order
     if childless && info[idxs[start]].subtree_size <= SIMPLE_SUBTREE_CUTOFF {
         assert!(n == info[idxs[start]].subtree_size);
         info[idxs[start]].simple = true;
+        return;
+    }
+
+    if n <= 3 {
         return;
     }
 
@@ -266,14 +262,18 @@ fn compute_tree_size<T>(nodes: &[IntervalNode<T>], root_idx: usize) -> usize
 fn veb_order<T>(nodes: &mut [IntervalNode<T>])
         where T: std::marker::Copy {
 
+    // let now = Instant::now();
     // it seems to not matter all that much how this is sorted
     nodes.sort_unstable_by_key(|node| node.first);
     // nodes.sort_unstable_by_key(|node| node.last);
     // nodes.sort_unstable_by_key(|node| (node.first, node.last));
     // nodes.sort_unstable_by_key(|node| (node.first, -node.last));
     // nodes.sort_unstable_by_key(|node| (node.last + node.first)/2);
+    // eprintln!("sorting nodes: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
+    // let now = Instant::now();
     let mut info = traverse(nodes.len());
+    // eprintln!("traversing: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
     let mut max_depth = 0;
     for info_i in &info {
@@ -290,9 +290,12 @@ fn veb_order<T>(nodes: &mut [IntervalNode<T>])
     }
     idxs.copy_from_slice(&mut tmp);
 
+    // let now = Instant::now();
     veb_order_recursion(
         &mut idxs, &mut tmp, &mut info, &nodes, 0, nodes.len(), true, 0, max_depth);
+    // eprintln!("computing order: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
+    // let now = Instant::now();
     // idxs is now a vEB -> sorted order map. Build the reverse here.
     let mut revidx = tmp;
     for (i, j) in idxs.iter().enumerate() {
@@ -329,6 +332,7 @@ fn veb_order<T>(nodes: &mut [IntervalNode<T>])
     // copy reordered nodes back to the original vector
     nodes.copy_from_slice(&mut veb_nodes);
     compute_subtree_sizes(nodes, 0);
+    // eprintln!("ordering: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
     assert!(compute_tree_size(nodes, 0) == nodes.len());
 }
@@ -342,30 +346,23 @@ fn overlaps(first_a: i32, last_a: i32, first_b: i32, last_b: i32) -> bool {
 fn query_recursion(
         nodes: &[IntervalNode<()>], root_idx: usize, first: i32, last: i32,
         count: &mut usize, overlap: &mut usize, visited: &mut usize) {
-    // eprintln!("{} {:?} {:?} {} {} {}",
-    //     root_idx, nodes[root_idx].left, nodes[root_idx].right,
-    //     nodes[root_idx].first, nodes[root_idx].last,  nodes[root_idx].simple);
 
     let node = &nodes[root_idx];
-    *visited += 1;
-    if overlaps(node.first, node.last, first, last) {
-        // eprintln!("hit!");
-        *count += 1;
-    }
 
     if node.simple {
-        for k in 1..node.right as usize {
-            let node = &nodes[root_idx+k];
-            // eprintln!("  {} {:?} {:?} {} {} {}",
-            //     root_idx+k, node.left, node.right,
-            //     node.first, node.last,  node.simple);
+        for k in root_idx..root_idx + node.right as usize {
+            let node = &nodes[k];
             if overlaps(node.first, node.last, first, last) {
-                // eprintln!("  hit!");
                 *count += 1;
                 *visited += 1;
             }
         }
     } else {
+        *visited += 1;
+        if overlaps(node.first, node.last, first, last) {
+            *count += 1;
+        }
+
         let left = node.left as usize;
         if left < u32::max_value() as usize {
             if overlaps(
@@ -556,7 +553,7 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
         // out.write(&line[..line.len()-1])?;
         // writeln!(out, "\t{}", count)?;
 
-        // unfortunately printing in c is  quite a bit faster than rust
+        // unfortunately printing in c is quite a bit faster than rust
         unsafe {
             let linelen = line.len();
             line[linelen-1] = b'\0';
