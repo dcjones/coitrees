@@ -32,13 +32,10 @@ struct IntervalNode<T> where T: std::marker::Copy
     first: i32,
     last: i32,
 
-    // when `simple` is false, these are pointers to children
-    // when `simple` is true, left has no meaning, and right
-    // is the number of nodes in the sequence.
+    // when this is the root of a simple subtree, left == right is the size
+    // of the subtree, otherwise they are left, right childe pointers.
     left: u32,
     right: u32,
-
-    simple: bool,
 
     metadata: T,
 }
@@ -215,7 +212,7 @@ fn compute_tree_size<T>(nodes: &[IntervalNode<T>], root_idx: usize) -> usize
 
     let mut subtree_size = 1;
 
-    if nodes[root_idx].simple {
+    if nodes[root_idx].left == nodes[root_idx].right {
         subtree_size = nodes[root_idx].right as usize;
     } else {
         let left = nodes[root_idx].left as usize;
@@ -347,9 +344,8 @@ fn veb_order<T>(nodes: &mut [IntervalNode<T>])
         veb_nodes[i] = nodes[idxs[i]];
 
         if info[idxs[i]].simple {
-            veb_nodes[i].simple = true;
-            veb_nodes[i].left = u32::max_value();
-            veb_nodes[i].right = info[idxs[i]].subtree_size as u32;
+            veb_nodes[i].left = info[idxs[i]].subtree_size as u32;
+            veb_nodes[i].right = veb_nodes[i].left;
         } else {
             // update left and right pointers
             let left = info[idxs[i]].left as u32;
@@ -387,7 +383,7 @@ fn query_recursion(
 
     let node = &nodes[root_idx];
 
-    if node.simple {
+    if node.left == node.right { // simple subtree
         for k in root_idx..root_idx + node.right as usize {
             let node = &nodes[k];
             if overlaps(node.first, node.last, first, last) {
@@ -404,7 +400,7 @@ fn query_recursion(
         let left = node.left as usize;
         if left < u32::max_value() as usize {
             if overlaps(
-                    node.first, nodes[left].subtree_last,
+                    0, nodes[left].subtree_last,
                     first, last) {
                 query_recursion(nodes, left, first, last, count, overlap, visited);
             }
@@ -491,7 +487,6 @@ fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<()>>, GenericE
             subtree_last: last,
             left: u32::max_value(),
             right: u32::max_value(),
-            simple: false,
             metadata: ()});
 
         line_count += 1;
