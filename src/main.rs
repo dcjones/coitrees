@@ -429,9 +429,7 @@ fn query_recursion(
 
         let right = node.right as usize;
         if right < u32::max_value() as usize {
-            if overlaps(
-                    node.first, nodes[right].subtree_last,
-                    first, last) {
+            if overlaps(node.first, nodes[right].subtree_last, first, last) {
                 query_recursion(nodes, right, first, last, count, overlap, visited);
             }
         }
