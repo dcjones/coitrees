@@ -157,15 +157,13 @@ fn stable_partition_by_depth(
 //   childless: true if this slice is a proper subtree and has no children below it
 //   parity: true if idxs and tmp are swapped and need to be copied back,
 //   min_depth, max_depth: depth extreme of the start..end slice
-fn veb_order_recursion<T>(
+fn veb_order_recursion(
         idxs: &mut [usize], tmp: &mut [usize],
         info: &mut [TraversalInfo],
-        nodes: &[IntervalNode<T>],
         start: usize, end: usize,
         childless: bool,
         parity: bool,
-        min_depth: usize, max_depth: usize)
-        where T: std::marker::Copy {
+        min_depth: usize, max_depth: usize) {
     let n = (start..end).len();
 
     // small subtrees are just put in sorted order
@@ -196,7 +194,7 @@ fn veb_order_recursion<T>(
 
     // recurse on top subtree
     veb_order_recursion(
-        idxs, tmp, info, nodes, start,
+        idxs, tmp, info, start,
         start + top_size, false, !parity, min_depth, pivot_depth);
 
     // find and recurse on bottom subtrees
@@ -214,7 +212,7 @@ fn veb_order_recursion<T>(
             j += 1;
         }
         veb_order_recursion(
-            idxs, tmp, info, nodes, i, j, childless, !parity,
+            idxs, tmp, info, i, j, childless, !parity,
             bottom_subtree_depth, subtree_max_depth);
         i = j;
     }
@@ -310,7 +308,6 @@ fn radix_sort_nodes<T>(nodes: &mut [IntervalNode<T>], tmp: &mut [IntervalNode<T>
 }
 
 
-
 // put nodes in van Emde Boas order
 fn veb_order<T>(mut nodes: Vec<IntervalNode<T>>) -> Vec<IntervalNode<T>>
         where T: std::marker::Copy {
@@ -318,7 +315,17 @@ fn veb_order<T>(mut nodes: Vec<IntervalNode<T>>) -> Vec<IntervalNode<T>>
     // let now = Instant::now();
     // nodes.sort_unstable_by_key(|node| node.first);
     let mut veb_nodes = nodes.clone();
-    radix_sort_nodes(&mut nodes, &mut veb_nodes);
+
+    let mut nodes_presorted = true;
+    for i in 1..nodes.len() {
+        if nodes[i].first < nodes[i-1].first {
+            nodes_presorted = false;
+            break;
+        }
+    }
+    if !nodes_presorted {
+        radix_sort_nodes(&mut nodes, &mut veb_nodes);
+    }
     // eprintln!("sorting nodes: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
     // let now = Instant::now();
@@ -343,7 +350,7 @@ fn veb_order<T>(mut nodes: Vec<IntervalNode<T>>) -> Vec<IntervalNode<T>>
 
     // let now = Instant::now();
     veb_order_recursion(
-        idxs, tmp, &mut info, &nodes, 0, nodes.len(), true, false, 0, max_depth);
+        idxs, tmp, &mut info, 0, nodes.len(), true, false, 0, max_depth);
     // eprintln!("computing order: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
     // let now = Instant::now();
