@@ -1,13 +1,10 @@
 
-use std::cmp::{min, max};
+use std::cmp::max;
 use std::error::Error;
-use std::io;
 use std::str;
 use std::time::Instant;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Write};
-use std::fmt::Display;
-use std::ptr;
+use std::io::{BufRead, BufReader};
 
 extern crate fnv;
 use fnv::FnvHashMap;
@@ -47,14 +44,13 @@ struct COITree<T>  where T: std::marker::Copy {
 
 
 impl<T> COITree<T> where T: std::marker::Copy {
-    pub fn new(mut nodes: Vec<IntervalNode<T>>) -> COITree<T> {
-        veb_order(&mut nodes);
-        return COITree { nodes: nodes };
+    pub fn new(nodes: Vec<IntervalNode<T>>) -> COITree<T> {
+        return COITree { nodes: veb_order(nodes) };
     }
 }
 
 
-
+// Used by `traverse` to keep record tree metadata.
 #[derive(Copy, Clone, Debug)]
 struct TraversalInfo {
     depth: usize,
@@ -66,6 +62,8 @@ struct TraversalInfo {
 }
 
 
+// dfs traversal of an implicit bst computing dfs number, node depth, subtree
+// size, and left and right pointers.
 fn traverse<T>(nodes: &mut [IntervalNode<T>]) -> Vec<TraversalInfo>
         where T: std::marker::Copy {
     let n = nodes.len();
@@ -78,7 +76,7 @@ fn traverse<T>(nodes: &mut [IntervalNode<T>]) -> Vec<TraversalInfo>
 }
 
 
-// dfs traversal of an implicit bst computing dfs number and depth.
+// The recursive part of the `traverse` function.
 fn traverse_recursion<T>(
         nodes: &mut [IntervalNode<T>],
         info: &mut [TraversalInfo],
@@ -127,52 +125,65 @@ fn traverse_recursion<T>(
 // partition (in the quicksort sense) indexes according do the corresponding depths
 // while retaining relative order.
 fn stable_partition_by_depth(
-        idxs: &mut [usize], tmp: &mut [usize],
+        input: &[usize], output: &mut [usize],
         info: &[TraversalInfo], pivot: usize,
         start: usize, end: usize) -> usize {
 
     let mut l = start;
     for i in start..end {
-        if info[idxs[i]].depth <= pivot {
-            tmp[l] = idxs[i];
+        if info[input[i]].depth <= pivot {
+            output[l] = input[i];
             l += 1;
         }
     }
 
     let mut r = l;
     for i in start..end {
-        if info[idxs[i]].depth > pivot {
-            tmp[r] = idxs[i];
+        if info[input[i]].depth > pivot {
+            output[r] = input[i];
             r += 1;
         }
     }
 
-    idxs[start..end].copy_from_slice(&tmp[start..end]);
     return l - start;
 }
 
 
-// recursively reorder indexes to put it in vEB order.
+// recursively reorder indexes to put it in vEB order. Called by `veb_order`
+//   idxs: current permutation
+//   tmp: temporary space of equal length to idxs
+//   nodes: the interval nodes (in sorted order)
+//   start, end: slice within idxs to be reordered
+//   childless: true if this slice is a proper subtree and has no children below it
+//   parity: true if idxs and tmp are swapped and need to be copied back,
+//   min_depth, max_depth: depth extreme of the start..end slice
 fn veb_order_recursion<T>(
         idxs: &mut [usize], tmp: &mut [usize],
         info: &mut [TraversalInfo],
         nodes: &[IntervalNode<T>],
         start: usize, end: usize,
-        childless: bool, // true if no nodes below the subtree indicated start..end
+        childless: bool,
+        parity: bool,
         min_depth: usize, max_depth: usize)
         where T: std::marker::Copy {
     let n = (start..end).len();
 
     // small subtrees are just put in sorted order
-
     if childless && info[idxs[start]].subtree_size <= SIMPLE_SUBTREE_CUTOFF {
         assert!(n == info[idxs[start]].subtree_size);
         info[idxs[start]].simple = true;
+
+        if parity {
+            tmp[start..end].copy_from_slice(&idxs[start..end]);
+        }
         return;
     }
 
-    // small trees are already in order
+    // very small trees are already in order
     if n <= 3 {
+        if parity {
+            tmp[start..end].copy_from_slice(&idxs[start..end]);
+        }
         return;
     }
 
@@ -180,10 +191,13 @@ fn veb_order_recursion<T>(
     let top_size = stable_partition_by_depth(
         idxs, tmp, info, pivot_depth, start, end);
 
+    // tmp is now partitioned by depth, so swap pointers
+    let (tmp, idxs) = (idxs, tmp);
+
     // recurse on top subtree
     veb_order_recursion(
         idxs, tmp, info, nodes, start,
-        start + top_size, false, min_depth, pivot_depth);
+        start + top_size, false, !parity, min_depth, pivot_depth);
 
     // find and recurse on bottom subtrees
     let bottom_subtree_depth = pivot_depth + 1;
@@ -200,13 +214,14 @@ fn veb_order_recursion<T>(
             j += 1;
         }
         veb_order_recursion(
-            idxs, tmp, info, nodes, i, j, childless,
+            idxs, tmp, info, nodes, i, j, childless, !parity,
             bottom_subtree_depth, subtree_max_depth);
         i = j;
     }
 }
 
 
+// Traverse the tree and return the size, used as a basic sanity check.
 fn compute_tree_size<T>(nodes: &[IntervalNode<T>], root_idx: usize) -> usize
         where T: std::marker::Copy {
 
@@ -230,6 +245,9 @@ fn compute_tree_size<T>(nodes: &[IntervalNode<T>], root_idx: usize) -> usize
 }
 
 
+// Simple two pass radix sort of 32bit integers (16bits at a time) to sort nodes
+// on start position. tmp is temporary space for the first pass of equal length
+// to nodes.
 fn radix_sort_nodes<T>(nodes: &mut [IntervalNode<T>], tmp: &mut [IntervalNode<T>])
         where T: std::marker::Copy {
 
@@ -294,22 +312,17 @@ fn radix_sort_nodes<T>(nodes: &mut [IntervalNode<T>], tmp: &mut [IntervalNode<T>
 
 
 // put nodes in van Emde Boas order
-fn veb_order<T>(nodes: &mut [IntervalNode<T>])
+fn veb_order<T>(mut nodes: Vec<IntervalNode<T>>) -> Vec<IntervalNode<T>>
         where T: std::marker::Copy {
 
     // let now = Instant::now();
-    // it seems to not matter all that much how this is sorted
     // nodes.sort_unstable_by_key(|node| node.first);
-    let mut veb_nodes = vec![nodes[0]; nodes.len()];
-    radix_sort_nodes(nodes, &mut veb_nodes);
-    // nodes.sort_unstable_by_key(|node| node.last);
-    // nodes.sort_unstable_by_key(|node| (node.first, node.last));
-    // nodes.sort_unstable_by_key(|node| (node.first, -node.last));
-    // nodes.sort_unstable_by_key(|node| (node.last + node.first)/2);
+    let mut veb_nodes = nodes.clone();
+    radix_sort_nodes(&mut nodes, &mut veb_nodes);
     // eprintln!("sorting nodes: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
     // let now = Instant::now();
-    let mut info = traverse(nodes);
+    let mut info = traverse(&mut nodes);
     // eprintln!("traversing: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
     let mut max_depth = 0;
@@ -319,22 +332,23 @@ fn veb_order<T>(nodes: &mut [IntervalNode<T>])
         }
     }
 
-    let mut idxs: Vec<usize> = (0..nodes.len()).collect();
-    let mut tmp: Vec<usize> = vec![0; nodes.len()];
+    let idxs: &mut [usize] = &mut ((0..nodes.len()).collect::<Vec<usize>>());
+    let tmp: &mut [usize] = &mut vec![0; nodes.len()];
 
-    for i in &idxs {
+    // put in dfs order
+    for i in &*idxs {
         tmp[info[*i].dfs] = *i;
     }
-    idxs.copy_from_slice(&mut tmp);
+    let (idxs, tmp) = (tmp, idxs);
 
     // let now = Instant::now();
     veb_order_recursion(
-        &mut idxs, &mut tmp, &mut info, &nodes, 0, nodes.len(), true, 0, max_depth);
+        idxs, tmp, &mut info, &nodes, 0, nodes.len(), true, false, 0, max_depth);
     // eprintln!("computing order: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
     // let now = Instant::now();
     // idxs is now a vEB -> sorted order map. Build the reverse here.
-    let mut revidx = tmp;
+    let revidx = tmp;
     for (i, j) in idxs.iter().enumerate() {
         revidx[*j] = i;
     }
@@ -364,19 +378,21 @@ fn veb_order<T>(nodes: &mut [IntervalNode<T>])
         }
     }
 
-    // copy reordered nodes back to the original vector
-    nodes.copy_from_slice(&mut veb_nodes);
     // eprintln!("ordering: {}s", now.elapsed().as_millis() as f64 / 1000.0);
+    assert!(compute_tree_size(&veb_nodes, 0) == veb_nodes.len());
 
-    assert!(compute_tree_size(nodes, 0) == nodes.len());
+    return veb_nodes;
 }
 
 
+// True iff the two intervals overlap.
 fn overlaps(first_a: i32, last_a: i32, first_b: i32, last_b: i32) -> bool {
     return first_a <= last_b && last_a >= first_b;
 }
 
 
+// Recursively count overlaps between the tree specified by `nodes` and a
+// query interval specified by `first`, `last`.
 fn query_recursion(
         nodes: &[IntervalNode<()>], root_idx: usize, first: i32, last: i32,
         count: &mut usize, overlap: &mut usize, visited: &mut usize) {
@@ -399,9 +415,7 @@ fn query_recursion(
 
         let left = node.left as usize;
         if left < u32::max_value() as usize {
-            if overlaps(
-                    0, nodes[left].subtree_last,
-                    first, last) {
+            if nodes[left].subtree_last >= first {
                 query_recursion(nodes, left, first, last, count, overlap, visited);
             }
         }
@@ -419,7 +433,6 @@ fn query_recursion(
 
 // super simple query which prints every overlap
 fn query(tree: &COITree<()>, first: i32, last: i32) -> (usize, usize, usize) {
-    // println!("QUERY");
     let mut count = 0;
     let mut overlap = 0;
     let mut visited = 0;
@@ -462,6 +475,7 @@ fn parse_bed_line(line: &[u8]) -> (&str, &str, &str, i32, i32) {
 }
 
 
+// Read a bed file into a COITree
 fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<()>>, GenericError> {
     let mut nodes = FnvHashMap::<String, Vec<IntervalNode<()>>>::default();
 
@@ -479,7 +493,6 @@ fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<()>>, GenericE
             node_arr
         } else {
             nodes.entry(seqname.to_string()).or_insert(Vec::new())
-            // nodes.entry(seqname.to_string()).or_insert(Vec::with_capacity(100))
         };
 
         node_arr.push(IntervalNode{
@@ -523,7 +536,7 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
     // let mut out = stdout.lock();
 
     while rdr.read_until(b'\n', &mut line).unwrap() > 0 {
-        let (seqname, first_str, last_str, first, last) =
+        let (seqname, _first_str, _last_str, first, last) =
             parse_bed_line(&line);
 
         let mut count = 0;
