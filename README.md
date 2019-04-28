@@ -16,7 +16,7 @@ overhead in computing the layout and storing child pointers, but makes
 searching through large trees significantly faster.
 
 The one additional optimization trick is that small subtrees at the bottom
-are stored in no particular order searched through linearly.
+are stored in no particular order and searched through linearly.
 
 # Using
 
@@ -43,7 +43,7 @@ million lines of `B`.
 | AIList                              |      26.8s |      15.3s |   2.0s   |  36.9s     |
 | NCList                              |      40.2s |      30.2s |   3.5s   |  55.4s     |
 | AITree                              |      39.9s |      37.0s |   3.0s   |  95.1s     |
-| `bedtools coverage -counts`         |     807.6s |    1080.5s |   311.4s |  3800.0s   |
+| `bedtools coverage -counts`         |     807.6s |    1080.5s |   311.4s |  4820.0s   |
 | `bedtools coverage -counts -sorted` |     584.7s |     660.7s |   304.8s |  2846.8s   |
 
 ## Intervals in randomized order
@@ -55,14 +55,14 @@ million lines of `B`.
 | AIList                              |      59.4s |      32.6s |     4.3s |     33.3s |
 | NCList                              |      74.1s |      42.1s |     5.8s |     64.9s |
 | AITree                              |     366.2s |     306.2s |    25.9s |   1577.0s |
-| `bedtools coverage -counts`         |   1809.2s  |    1511.5s |   358.0s |    217.4s |
+| `bedtools coverage -counts`         |   1809.2s  |    1511.5s |   358.0s |  13056.0s |
 
 # Discussion
 
 To put things in context, AIList, AITree, and NCList all sleazily use
 hardcoded chromosome names to avoid hashing names, and skip mitochondrial
-intervals some some reason, which excludes 126 intervals in `A` and 3 million
-in 'B'. coitrees and cgranges don't make these assumptions but are optimized
+intervals for some reason, which excludes 126 intervals in `A` and 3 million
+in `B`. coitrees and cgranges don't make these assumptions but are optimized
 to this particular benchmark. bedtools on the other hand is an actual useful
 tool with a lot of features.
 
@@ -73,8 +73,8 @@ reading/writing can be the bulk of the runtime. I had to optimize this in
 coitrees by calling out to `printf` in an `unsafe` block.
 
 A fair benchmark would have each of these methods implemented as a library
-with a standard interface, then a benchmark program would be link and call
-each. I someone wanted to implement that, I'd probably help.
+with a standard interface, then a benchmark program would link and call
+each. If someone wanted to implement that, I'd probably help.
 
 In [cgranges](https://github.com/lh3/cgranges) there are also benchmarks that
 compute covered fraction, not just intersection counts. I haven't implemented
@@ -85,4 +85,4 @@ Another good benchmark would be to store some metadata with each interval,
 count intersections that pass some filter based on that metadata. That way no
 counting shortcuts could be made and every intersection would need to be
 inspected. Not all these methods support storing arbitrary data with the
-node, so that too would take some work.
+interval, so that too would take some work.
