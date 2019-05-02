@@ -5,6 +5,7 @@ use std::str;
 use std::time::Instant;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::ptr;
 
 extern crate fnv;
 use fnv::FnvHashMap;
@@ -400,7 +401,7 @@ fn overlaps(first_a: i32, last_a: i32, first_b: i32, last_b: i32) -> bool {
 
 // Recursively count overlaps between the tree specified by `nodes` and a
 // query interval specified by `first`, `last`.
-fn query_recursion(
+fn query_count_recursion(
         nodes: &[IntervalNode<()>], root_idx: usize, first: i32, last: i32,
         count: &mut usize, overlap: &mut usize, visited: &mut usize) {
 
@@ -423,27 +424,166 @@ fn query_recursion(
         let left = node.left as usize;
         if left < u32::max_value() as usize {
             if nodes[left].subtree_last >= first {
-                query_recursion(nodes, left, first, last, count, overlap, visited);
+                query_count_recursion(nodes, left, first, last, count, overlap, visited);
             }
         }
 
         let right = node.right as usize;
         if right < u32::max_value() as usize {
             if overlaps(node.first, nodes[right].subtree_last, first, last) {
-                query_recursion(nodes, right, first, last, count, overlap, visited);
+                query_count_recursion(nodes, right, first, last, count, overlap, visited);
             }
         }
     }
 }
 
 // super simple query which prints every overlap
-fn query(tree: &COITree<()>, first: i32, last: i32) -> (usize, usize, usize) {
+fn query_count(tree: &COITree<()>, first: i32, last: i32) -> (usize, usize, usize) {
     let mut count = 0;
     let mut overlap = 0;
     let mut visited = 0;
-    query_recursion(
+    query_count_recursion(
         &tree.nodes, 0, first, last, &mut count, &mut overlap, &mut visited);
     return (count, overlap, visited);
+}
+
+
+fn query_recursion<'a>(
+        nodes: &'a [IntervalNode<()>], root_idx: usize, first: i32, last: i32,
+        overlapping_intervals: &mut Vec<&'a IntervalNode<()>>) {
+
+    let node = &nodes[root_idx];
+
+    if node.left == node.right { // simple subtree
+        for k in root_idx..root_idx + node.right as usize {
+            let node: &IntervalNode<()> = &nodes[k];
+            if overlaps(node.first, node.last, first, last) {
+                overlapping_intervals.push(node);
+            }
+        }
+    } else {
+        if overlaps(node.first, node.last, first, last) {
+            overlapping_intervals.push(node);
+        }
+
+        let left = node.left as usize;
+        if left < u32::max_value() as usize {
+            if nodes[left].subtree_last >= first {
+                query_recursion(nodes, left, first, last, overlapping_intervals);
+            }
+        }
+
+        let right = node.right as usize;
+        if right < u32::max_value() as usize {
+            if overlaps(node.first, nodes[right].subtree_last, first, last) {
+                query_recursion(nodes, right, first, last, overlapping_intervals);
+            }
+        }
+    }
+}
+
+
+fn query<'a>(tree: &'a COITree<()>, first: i32, last: i32, overlapping_intervals: &mut Vec<&'a IntervalNode<()>>) {
+    query_recursion(
+        &tree.nodes, 0, first, last, overlapping_intervals);
+}
+
+
+fn query_firsts_recursion<'a>(
+        nodes: &'a [IntervalNode<()>], root_idx: usize, first: i32, last: i32,
+        overlapping_intervals: &mut Vec<&'a IntervalNode<()>>) {
+
+    let node = &nodes[root_idx];
+
+    if node.left == node.right { // simple subtree
+        for k in root_idx..root_idx + node.right as usize {
+            let node = &nodes[k];
+            if first <= node.first && node.first <= last {
+                overlapping_intervals.push(node);
+            }
+        }
+    } else {
+        if first <= node.first && node.first <= last {
+            overlapping_intervals.push(node);
+        }
+
+        let left = node.left as usize;
+        if left < u32::max_value() as usize && first <= node.first {
+            query_firsts_recursion(nodes, left, first, last, overlapping_intervals);
+        }
+
+        let right = node.right as usize;
+        if right < u32::max_value() as usize && last >= node.first {
+            query_firsts_recursion(nodes, right, first, last, overlapping_intervals);
+        }
+    }
+}
+
+
+// same as query but only look for intervals that begin within [first, last].
+fn query_firsts<'a>(tree: &'a COITree<()>, first: i32, last: i32, overlapping_intervals: &mut Vec<&'a IntervalNode<()>>) {
+    query_firsts_recursion(
+        &tree.nodes, 0, first, last, overlapping_intervals);
+}
+
+
+// an experimental query strategy: if this query overlaps with a previous one, try
+// to use that information to make the query faster.
+fn relative_query<'a>(
+        tree: &'a COITree<()>, prev_first: i32, prev_last: i32,
+        prev_overlaps: &mut Vec<&'a IntervalNode<()>>, first: i32, last: i32) {
+
+    // not overlapping or preceding
+    if first < prev_first || first > prev_last {
+        prev_overlaps.clear();
+        query(tree, first, last, prev_overlaps);
+        return;
+    }
+
+    // adjust prev_overlaps to account for differences
+
+    if first > prev_first {
+        // remove all previous overlaps that end in prev_first..first
+
+        // prev_overlaps.sort_unstable_by_key(|node| -node.last);
+        // let mut n = 0;
+        // while n < prev_overlaps.len() && prev_overlaps[n].last >= first {
+        //     n += 1;
+        // }
+        // prev_overlaps.truncate(n);
+
+        let mut i = 0;
+        while i < prev_overlaps.len() {
+            if prev_overlaps[i].last < first {
+                prev_overlaps.swap_remove(i);
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    if last < prev_last {
+        // remove all previous overlaps that start in last+1..prev_last
+
+        // prev_overlaps.sort_unstable_by_key(|node| node.first);
+        // let mut n = 0;
+        // while n < prev_overlaps.len() && prev_overlaps[n].first <= last {
+        //     n += 1;
+        // }
+        // prev_overlaps.truncate(n);
+
+        let mut i = 0;
+        while i < prev_overlaps.len() {
+            if prev_overlaps[i].first > last {
+                prev_overlaps.swap_remove(i);
+            } else {
+                i += 1;
+            }
+        }
+    } else if last > prev_last {
+        // find all intervals that start in prev_last+1..last
+        query_firsts(tree, prev_last+1, last, prev_overlaps);
+    }
 }
 
 
@@ -540,19 +680,39 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
     // let stdout = io::stdout();
     // let mut out = stdout.lock();
 
+    let mut overlapping_intervals = Vec::new();
+    let mut prev_first = -1;
+    let mut prev_last = -1;
+    let mut prev_seqname_tree_option = None;
+
     while rdr.read_until(b'\n', &mut line).unwrap() > 0 {
         let (seqname, _first_str, _last_str, first, last) =
             parse_bed_line(&line);
 
         let mut count = 0;
-        let mut overlap = 0;
-        let mut visited = 0;
         if let Some(seqname_tree) = tree.get(seqname) {
 
-            let count_overlap = query(&seqname_tree, first, last);
-            count = count_overlap.0;
-            overlap = count_overlap.1;
-            visited = count_overlap.2;
+            // let count_overlap = query_count(&seqname_tree, first, last);
+            // count = count_overlap.0;
+            // overlap = count_overlap.1;
+            // visited = count_overlap.2;
+
+            if let Some(prev_seqname_tree) = prev_seqname_tree_option {
+                if !ptr::eq(prev_seqname_tree, seqname_tree) {
+                    prev_first = -1;
+                    prev_last = -1;
+                }
+            } else {
+                prev_first = -1;
+                prev_last = -1;
+            }
+
+            relative_query(
+                &seqname_tree, prev_first, prev_last,
+                &mut overlapping_intervals, first, last);
+
+            count = overlapping_intervals.len();
+            prev_seqname_tree_option = Some(seqname_tree);
         }
 
         // out.write(&line[..line.len()-1])?;
@@ -568,15 +728,17 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
                 count as u32);
         }
 
-        total_visits += visited;
+        // total_visits += visited;
         total_count += count;
+        prev_first = first;
+        prev_last = last;
 
         line.clear();
     }
 
     eprintln!("overlap: {}s", now.elapsed().as_millis() as f64 / 1000.0);
     eprintln!("total overlaps: {}", total_count);
-    eprintln!("total visits: {}", total_visits);
+    // eprintln!("total visits: {}", total_visits);
 
     return Ok(());
 }
