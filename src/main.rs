@@ -549,6 +549,8 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
         let mut visited = 0;
         if let Some(seqname_tree) = tree.get(seqname) {
 
+            count = seqname_tree.count_overlaps(first, last);
+
             // let count_overlap = query(&seqname_tree, first, last);
             // count = count_overlap.0;
             // overlap = count_overlap.1;

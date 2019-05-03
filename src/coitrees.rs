@@ -24,6 +24,9 @@ struct IndexNode<T> {
     // Where left!=right, this is an internal node with pointers into index.
     left: u32,
     right: u32,
+
+    // index of first data element in this subtree
+    subtree_max_data_idx: u32,
 }
 
 
@@ -34,7 +37,8 @@ impl<T> IndexNode<T>
             first: T::default(),
             subtree_last: T::default(),
             left: u32::max_value(),
-            right: u32::max_value()};
+            right: u32::max_value(),
+            subtree_max_data_idx: u32::max_value() };
     }
 }
 
@@ -140,6 +144,7 @@ fn traverse_recursion<T, M>(
             subtree_last: data[start].last,
             left: start as u32,
             right: start as u32,
+            subtree_max_data_idx: start as u32,
         });
 
         return (index.len() - 1) as u32;
@@ -152,13 +157,17 @@ fn traverse_recursion<T, M>(
         subtree_last: T::default(),
         left: u32::max_value(),
         right: u32::max_value(),
+        subtree_max_data_idx: u32::max_value(),
     });
     let root_idx = index.len() - 1;
 
     // traverse left
     index[root_idx].left =
         traverse_recursion(data, index, depths, start, mid, depth + 1);
-    index[root_idx].subtree_last = index[index[root_idx].left as usize].subtree_last;
+    index[root_idx].subtree_last =
+        index[index[root_idx].left as usize].subtree_last;
+    index[root_idx].subtree_max_data_idx =
+        index[index[root_idx].left as usize].subtree_max_data_idx;
 
     // traverse right
     index[root_idx].right =
@@ -166,6 +175,9 @@ fn traverse_recursion<T, M>(
     index[root_idx].subtree_last = max(
         index[root_idx].subtree_last,
         index[index[root_idx].right as usize].subtree_last);
+    index[root_idx].subtree_max_data_idx = max(
+        index[root_idx].subtree_max_data_idx,
+        index[index[root_idx].right as usize].subtree_max_data_idx);
 
     return root_idx as u32;
 }
@@ -244,4 +256,60 @@ fn stable_partition_by_depth(
     }
 
     return l - start;
+}
+
+impl<T, M> COITree<T, M> where T: Ord + Copy {
+    pub fn count_overlaps(&self, first: T, last: T) -> usize
+            where T: Ord + Copy {
+        let mut count = 0;
+
+        count_overlaps_recursion(
+            self, 0, first, last, 0, &mut count);
+
+        return count;
+    }
+}
+
+
+fn count_overlaps_recursion<T, M>(
+        tree: &COITree<T, M>, root_idx: usize,
+        first: T, last: T, mut min_data_idx: usize,
+        count: &mut usize) -> usize
+        where T: Ord + Copy {
+    let node = &tree.index[root_idx];
+
+    if node.left == node.right {
+        let mut i = node.left as usize;
+        while i < tree.data.len() &&
+                overlaps(tree.data[i].first, tree.data[i].last, first, last) {
+            *count += 1;
+            i += 1;
+        }
+        min_data_idx = i + 1;
+        return min_data_idx;
+    }
+
+    // internal node
+    let left_node = &tree.index[node.left as usize];
+    if left_node.subtree_last >= first &&
+            (left_node.subtree_max_data_idx as usize) >= min_data_idx {
+        min_data_idx = count_overlaps_recursion(
+            tree, node.left as usize, first, last, min_data_idx, count);
+    }
+
+    let right_node = &tree.index[node.right as usize];
+    if overlaps(node.first, right_node.subtree_last, first, last) &&
+            (right_node.subtree_max_data_idx as usize) >= min_data_idx {
+        min_data_idx = count_overlaps_recursion(
+            tree, node.right as usize, first, last, min_data_idx, count);
+    }
+
+    return min_data_idx;
+}
+
+
+// True iff the two intervals overlap.
+fn overlaps<T>(first_a: T, last_a: T, first_b: T, last_b: T) -> bool
+        where T: Ord {
+    return first_a <= last_b && last_a >= first_b;
 }
