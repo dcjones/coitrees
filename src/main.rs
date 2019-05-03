@@ -1,4 +1,6 @@
 
+mod coitrees;
+
 use std::cmp::max;
 use std::error::Error;
 use std::str;
@@ -481,8 +483,8 @@ fn parse_bed_line(line: &[u8]) -> (&str, &str, &str, i32, i32) {
 
 
 // Read a bed file into a COITree
-fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<()>>, GenericError> {
-    let mut nodes = FnvHashMap::<String, Vec<IntervalNode<()>>>::default();
+fn read_bed_file(path: &str) -> Result<FnvHashMap<String, coitrees::COITree<i32, ()>>, GenericError> {
+    let mut nodes = FnvHashMap::<String, Vec<coitrees::Interval<i32, ()>>>::default();
 
     let now = Instant::now();
 
@@ -500,11 +502,9 @@ fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<()>>, GenericE
             nodes.entry(seqname.to_string()).or_insert(Vec::new())
         };
 
-        node_arr.push(IntervalNode{
-            first: first, last: last,
-            subtree_last: last,
-            left: u32::max_value(),
-            right: u32::max_value(),
+        node_arr.push(coitrees::Interval{
+            first: first,
+            last: last,
             metadata: ()});
 
         line_count += 1;
@@ -516,9 +516,9 @@ fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<()>>, GenericE
     eprintln!("sequences: {}", nodes.len());
 
     let now = Instant::now();
-    let mut trees = FnvHashMap::<String, COITree<()>>::default();
+    let mut trees = FnvHashMap::<String, coitrees::COITree<i32, ()>>::default();
     for (seqname, seqname_nodes) in nodes {
-        trees.insert(seqname, COITree::new(seqname_nodes));
+        trees.insert(seqname, coitrees::COITree::new(seqname_nodes));
     }
     eprintln!("veb_order: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
@@ -549,10 +549,10 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
         let mut visited = 0;
         if let Some(seqname_tree) = tree.get(seqname) {
 
-            let count_overlap = query(&seqname_tree, first, last);
-            count = count_overlap.0;
-            overlap = count_overlap.1;
-            visited = count_overlap.2;
+            // let count_overlap = query(&seqname_tree, first, last);
+            // count = count_overlap.0;
+            // overlap = count_overlap.1;
+            // visited = count_overlap.2;
         }
 
         // out.write(&line[..line.len()-1])?;
