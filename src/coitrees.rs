@@ -278,13 +278,15 @@ fn count_overlaps_recursion<T, M>(
         where T: Ord + Copy {
     let node = &tree.index[root_idx];
 
+    // leaf node
     if node.left == node.right {
         let mut i = node.left as usize;
-        while i < tree.data.len() &&
-                overlaps(tree.data[i].first, tree.data[i].last, first, last) {
-            *count += 1;
+        let data = &tree.data;
+        while i < data.len() &&
+                overlaps(data[i].first, data[i].last, first, last) {
             i += 1;
         }
+        *count += i - node.left as usize;
         min_data_idx = i + 1;
         return min_data_idx;
     }
