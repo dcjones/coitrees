@@ -49,6 +49,13 @@ impl<T> COITree<T> where T: std::marker::Copy {
     }
 }
 
+// TODO: The one idea from the failed Bender experiment we could use is to build
+// the info and initial nodes vectors as we go, so it is initialized in dfs
+// order. That saves a little time, and we also don't need to need to store dfs
+// Part of why construction was a little faster in Bender is that I was sorting
+// smaller structs. So this may not help much.
+
+// TODO: We also might as well make some of make some of these usize members u32s
 
 // Used by `traverse` to keep record tree metadata.
 #[derive(Copy, Clone, Debug)]
