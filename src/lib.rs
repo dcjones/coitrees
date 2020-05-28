@@ -1,5 +1,6 @@
 
 use std::time::Instant; // for debugging
+use std::fmt;
 
 // avx2 stuff
 use std::arch::x86_64::{
@@ -11,7 +12,7 @@ use std::arch::x86_64::{
     _mm256_xor_si256, _mm256_movemask_epi8 };
 
 // number of __m256i chunks go in a leaf
-const LEAF_SIZE: usize = 4;
+const LEAF_SIZE: usize = 1;
 
 
 // smallest integer >= x/y
@@ -43,6 +44,7 @@ impl I32x8 {
         return I32x8 {
             x: unsafe {
                 _mm256_set_epi32(
+                    // xs[7], xs[6], xs[5], xs[4], xs[3], xs[2], xs[1], xs[0])
                     xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6], xs[7])
             }
         };
@@ -58,6 +60,14 @@ impl I32x8 {
         let x5 = f(5);
         let x6 = f(6);
         let x7 = f(7);
+        // let x7 = f(0);
+        // let x6 = f(1);
+        // let x5 = f(2);
+        // let x4 = f(3);
+        // let x3 = f(4);
+        // let x2 = f(5);
+        // let x1 = f(6);
+        // let x0 = f(7);
         return I32x8 {
             x: unsafe {
                 _mm256_set_epi32(x0, x1, x2, x3, x4, x5, x6, x7)
@@ -68,7 +78,7 @@ impl I32x8 {
     // extract the first element of the vector
     fn first(&self) -> i32 {
         return unsafe {
-            _mm256_extract_epi32(self.x, 0)
+            _mm256_extract_epi32(self.x, 7)
         };
     }
 
@@ -96,6 +106,24 @@ impl I32x8 {
                 _mm256_max_epi32(self.x, w.x)
             }
         };
+    }
+}
+
+
+impl fmt::Display for I32x8 {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        unsafe {
+            return write!(
+                f, "({}, {}, {}, {}, {}, {}, {}, {})",
+                _mm256_extract_epi32(self.x, 7),
+                _mm256_extract_epi32(self.x, 6),
+                _mm256_extract_epi32(self.x, 5),
+                _mm256_extract_epi32(self.x, 4),
+                _mm256_extract_epi32(self.x, 3),
+                _mm256_extract_epi32(self.x, 2),
+                _mm256_extract_epi32(self.x, 1),
+                _mm256_extract_epi32(self.x, 0));
+        }
     }
 }
 
@@ -132,11 +160,13 @@ fn interval_chunk_overlaps(
         // only need one bit per hit
         hits &= 0b10001000100010001000100010001000;
 
+        // eprintln!("hits: {:032b}", hits);
+
         // exclude the unused bits
         let excluded = 8 - mask;
         hits >>= 4*excluded;
 
-        eprintln!("hits: {:032b}", hits);
+        // eprintln!("hits: {:032b} ({})", hits, excluded);
 
         // compact into an u32
         return IntervalChunkOverlaps{hits: hits, excluded: excluded as u32, shift: 0};
@@ -238,7 +268,6 @@ impl<T> COITree<T> where T: std::marker::Copy {
         // (we not assume metadata is small, so avoid shuffling it around)
         let mut perm: Vec<u32> = (0..(n as u32)).collect();
         perm.sort_unstable_by_key(|i| intervals[*i as usize].first);
-        eprintln!("sorting bed: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
         // copy metadata to metadata array
         let now = Instant::now();
@@ -246,7 +275,6 @@ impl<T> COITree<T> where T: std::marker::Copy {
         for i in &perm {
             metadata.push(intervals[*i as usize].metadata);
         }
-        eprintln!("copying metadata: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
         // copy intervals to intervals array, packing into chunks
         let now = Instant::now();
@@ -271,14 +299,10 @@ impl<T> COITree<T> where T: std::marker::Copy {
 
         }
         assert!(keys.len() == num_chunks);
-        eprintln!("copying keys: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
         // figure the sizes of things
         let keys_per_leaf = LEAF_SIZE*chunk_size;
         let num_leaves = cld(n, keys_per_leaf);
-        eprintln!("n: {}", n);
-        eprintln!("keys_per_leaf: {}", keys_per_leaf);
-        eprintln!("num_leaves: {}", num_leaves);
         let num_bottom_layer_nodes = cld(num_leaves, node_size);
 
         let size_guess = (chunk_size*num_bottom_layer_nodes) / (chunk_size - 1);
@@ -325,12 +349,10 @@ impl<T> COITree<T> where T: std::marker::Copy {
                 child_len: child_len
             });
         }
-        eprintln!("building bottom layer nodes: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
         // make upper levels of the tree
         let mut curr_layer = 0..nodes.len();
         while curr_layer.len() > 1 {
-            eprintln!("curr_layer {}..{}", curr_layer.start, curr_layer.end);
             // divvy current layer into a new layer
             let num_parents = cld(curr_layer.len(), node_size);
 
@@ -392,10 +414,14 @@ impl<T> COITree<T> where T: std::marker::Copy {
             count: &mut usize, overlap: &mut usize, visited: &mut usize) {
         let node = &self.nodes[idx];
 
+        // eprintln!("minfirst: {}", node.minfirst);
+        // eprintln!("maxlast: {}", node.maxlast);
+
         if node.leaf_children {
             for i in interval_chunk_overlaps(
                     &query_first, &query_last,
                     &node.minfirst, &node.maxlast, node.num_children) {
+                // eprintln!("i: {}", i);
                 self.query_leaf(
                     node.child_start[i] as usize, node.child_len[i] as usize,
                     query_first, query_last, count, overlap, visited);
@@ -404,6 +430,7 @@ impl<T> COITree<T> where T: std::marker::Copy {
             for i in interval_chunk_overlaps(
                     query_first, query_last,
                     &node.minfirst, &node.maxlast, node.num_children) {
+                // eprintln!("i: {}", i);
                 self.query_node(
                     node.child_start[i] as usize,
                     query_first, query_last, count, overlap, visited)
@@ -415,6 +442,7 @@ impl<T> COITree<T> where T: std::marker::Copy {
             &self, idx: usize, leaflen: usize, query_first: &I32x8, query_last: &I32x8,
             count: &mut usize, overlap: &mut usize, visited: &mut usize) {
 
+        // eprintln!("leaf");
         let chunk_size = I32x8::lanes();
         let num_chunks = cld(leaflen, chunk_size);
         for i in 0..num_chunks {
@@ -436,6 +464,12 @@ impl<T> COITree<T> where T: std::marker::Copy {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inspect_pack() {
+        let a = I32x8::pack([1, 2, 3, 4, 5, 6, 7, 8]);
+        println!("a: {}", a);
+    }
 
     #[test]
     fn check_interval_chunk_overlaps() {
