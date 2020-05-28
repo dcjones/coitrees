@@ -310,6 +310,15 @@ impl<T> COITree<T> where T: std::marker::Copy {
         let size_guess = (chunk_size*num_bottom_layer_nodes) / (chunk_size - 1);
         let mut nodes: Vec<Node> = Vec::with_capacity(size_guess);
 
+        // TODO: this tree building algorithm is really suboptimal. We should
+        // have 8 children in the top, but we usually don't, so those avx
+        // comparisons are wasted. What's the right way to do this? Bottom down?
+        // I think that must be the way to go. Should be trying to minimize the
+        // number of nodes. We are always doing all 8 comparisons.
+
+        // we could even do full trees with implicit coordinates.
+
+
         // divvy up entrys into the bottom layer of internal nodes
         let now = Instant::now();
         for i in 0..num_bottom_layer_nodes {
@@ -353,8 +362,10 @@ impl<T> COITree<T> where T: std::marker::Copy {
         }
 
         // make upper levels of the tree
+        // eprintln!("--------------");
         let mut curr_layer = 0..nodes.len();
         while curr_layer.len() > 1 {
+            // eprintln!("curr_layer.len: {}", curr_layer.len());
             // divvy current layer into a new layer
             let num_parents = cld(curr_layer.len(), node_size);
             for i in 0..num_parents {
@@ -457,6 +468,7 @@ impl<T> COITree<T> where T: std::marker::Copy {
                 self.query_leaf(
                     node.child_start[i] as usize, node.child_len[i] as usize,
                     query_first, query_last, count, overlap, visited);
+                *visited += 1;
             }
         } else {
             for i in interval_chunk_overlaps(
@@ -464,7 +476,8 @@ impl<T> COITree<T> where T: std::marker::Copy {
                     &node.minfirst, &node.maxlast, node.num_children) {
                 self.query_node(
                     node.child_start[i] as usize,
-                    query_first, query_last, count, overlap, visited)
+                    query_first, query_last, count, overlap, visited);
+                *visited += 1;
             }
         }
     }
@@ -487,7 +500,6 @@ impl<T> COITree<T> where T: std::marker::Copy {
                 // to extract specific values.
             }
         }
-        *visited += 1;
     }
 }
 
