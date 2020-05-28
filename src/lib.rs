@@ -3,10 +3,12 @@ use std::time::Instant; // for debugging
 
 // avx2 stuff
 use std::arch::x86_64::{
-    __m128i, __m256i,
+    _lzcnt_u32,
+    __m128i, __m256i, __m256,
     _mm_extract_epi32, _mm_max_epi32, _mm256_extracti128_si256,
     _mm256_set_epi32, _mm256_set1_epi32, _mm256_extract_epi32,
-    _mm256_max_epi32};
+    _mm256_max_epi32, _mm256_cmpgt_epi32, _mm256_cmpeq_epi32, _mm256_or_si256,
+    _mm256_xor_si256, _mm256_movemask_epi8 };
 
 // number of __m256i chunks go in a leaf
 const LEAF_SIZE: usize = 4;
@@ -96,6 +98,72 @@ impl I32x8 {
         };
     }
 }
+
+
+// check for overlaps between 2 pairs of 8 of intervals stored in vectors,
+// and iterate over indexes that overlap
+struct IntervalChunkOverlaps {
+    // encoded where bit 4*i is set if interval pair i overlaps
+    hits: u32,
+
+    // number of low order entries to ignore
+    excluded: u32,
+    shift: u32,
+}
+
+
+fn interval_chunk_overlaps(
+        first_a: &I32x8, last_a: &I32x8,
+        first_b: &I32x8, last_b: &I32x8,
+        mask: u8) -> IntervalChunkOverlaps {
+    unsafe {
+        // test if the intervals do not overlap
+        let nothits256 = _mm256_or_si256(
+            _mm256_cmpgt_epi32(first_a.x, last_b.x),
+            _mm256_cmpgt_epi32(first_b.x, last_a.x));
+
+        // flip all the bits
+        let ones256 = _mm256_cmpeq_epi32(nothits256, nothits256);
+        let hits256 = _mm256_xor_si256(nothits256, ones256);
+
+        // compact
+        let mut hits = _mm256_movemask_epi8(hits256) as u32;
+
+        // only need one bit per hit
+        hits &= 0b10001000100010001000100010001000;
+
+        // exclude the unused bits
+        let excluded = 8 - mask;
+        hits >>= 4*excluded;
+
+        eprintln!("hits: {:032b}", hits);
+
+        // compact into an u32
+        return IntervalChunkOverlaps{hits: hits, excluded: excluded as u32, shift: 0};
+    }
+}
+
+
+impl Iterator for IntervalChunkOverlaps {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.hits == 0 {
+            return None
+        } else {
+            let lz = unsafe {
+                _lzcnt_u32(self.hits)
+            };
+
+            self.hits <<= lz + 1; // done with these bits
+            self.shift += (lz + 1)/4;
+            let i = self.shift - self.excluded;
+
+            return Some(i as usize);
+        }
+    }
+}
+
 
 // find the maximum interval end in the slice of keys
 fn key_max_last(keys: &[IntervalChunk]) -> i32 {
@@ -340,5 +408,24 @@ impl<T> COITree<T> where T: std::marker::Copy {
         // to deal with unaligned data.
         // here we can do the interval comparison stuff again
 
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn check_interval_chunk_overlaps() {
+        // play around and see if this thing works
+        let first_a = I32x8::fill(5);
+        let last_a = I32x8::fill(70);
+
+        let first_b = I32x8::pack([0, 80, 20, 30, 40, 50, 60, 70]);
+        let last_b = I32x8::pack([9, 99, 29, 39, 49, 59, 69, 79]);
+
+        for i in interval_chunk_overlaps(&first_a, &last_a, &first_b, &last_b, 7) {
+            println!("i: {}", i);
+        }
     }
 }
