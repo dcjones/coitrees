@@ -96,54 +96,54 @@ fn read_bed_file(path: &str) -> Result<FnvHashMap<String, coitree::COITree<()>>,
 fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericError> {
     let tree = read_bed_file(filename_a)?;
 
-    // let file = File::open(filename_b)?;
-    // let mut rdr = BufReader::new(file);
-    // let mut line = Vec::new();
+    let file = File::open(filename_b)?;
+    let mut rdr = BufReader::new(file);
+    let mut line = Vec::new();
 
-    // let mut total_visits = 0;
-    // let mut total_count = 0;
-    // let now = Instant::now();
+    let mut total_visits = 0;
+    let mut total_count = 0;
+    let now = Instant::now();
 
-    // // let stdout = io::stdout();
-    // // let mut out = stdout.lock();
+    // let stdout = io::stdout();
+    // let mut out = stdout.lock();
 
-    // while rdr.read_until(b'\n', &mut line).unwrap() > 0 {
-    //     let (seqname, _first_str, _last_str, first, last) =
-    //         parse_bed_line(&line);
+    while rdr.read_until(b'\n', &mut line).unwrap() > 0 {
+        let (seqname, _first_str, _last_str, first, last) =
+            parse_bed_line(&line);
 
-    //     let mut count = 0;
-    //     let mut overlap = 0;
-    //     let mut visited = 0;
-    //     if let Some(seqname_tree) = tree.get(seqname) {
+        let mut count = 0;
+        let mut overlap = 0;
+        let mut visited = 0;
+        if let Some(seqname_tree) = tree.get(seqname) {
 
-    //         let count_overlap = query(&seqname_tree, first, last);
-    //         count = count_overlap.0;
-    //         overlap = count_overlap.1;
-    //         visited = count_overlap.2;
-    //     }
+            let count_overlap = seqname_tree.query(first, last);
+            count = count_overlap.0;
+            overlap = count_overlap.1;
+            visited = count_overlap.2;
+        }
 
-    //     // out.write(&line[..line.len()-1])?;
-    //     // writeln!(out, "\t{}", count)?;
+        // out.write(&line[..line.len()-1])?;
+        // writeln!(out, "\t{}", count)?;
 
-    //     // unfortunately printing in c is quite a bit faster than rust
-    //     unsafe {
-    //         let linelen = line.len();
-    //         line[linelen-1] = b'\0';
-    //         libc::printf(
-    //             b"%s\t%u\n\0".as_ptr() as *const i8,
-    //             line.as_ptr() as *const i8,
-    //             count as u32);
-    //     }
+        // unfortunately printing in c is quite a bit faster than rust
+        unsafe {
+            let linelen = line.len();
+            line[linelen-1] = b'\0';
+            libc::printf(
+                b"%s\t%u\n\0".as_ptr() as *const i8,
+                line.as_ptr() as *const i8,
+                count as u32);
+        }
 
-    //     total_visits += visited;
-    //     total_count += count;
+        total_visits += visited;
+        total_count += count;
 
-    //     line.clear();
-    // }
+        line.clear();
+    }
 
-    // eprintln!("overlap: {}s", now.elapsed().as_millis() as f64 / 1000.0);
-    // eprintln!("total overlaps: {}", total_count);
-    // eprintln!("total visits: {}", total_visits);
+    eprintln!("overlap: {}s", now.elapsed().as_millis() as f64 / 1000.0);
+    eprintln!("total overlaps: {}", total_count);
+    eprintln!("total visits: {}", total_visits);
 
     return Ok(());
 }

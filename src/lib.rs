@@ -374,40 +374,62 @@ impl<T> COITree<T> where T: std::marker::Copy {
     }
 
     pub fn query(&self, first: i32, last:i32) -> (usize, usize , usize) {
-        let firstv = I32x8::fill(first);
-        let lastv = I32x8::fill(last);
+        let query_first = I32x8::fill(first);
+        let query_last = I32x8::fill(last);
 
         let mut count = 0;
         let mut overlap = 0;
         let mut visited = 0;
 
         self.query_node(
-            self.nodes.len()-1, firstv, lastv, &mut count, &mut overlap, &mut visited);
+            self.nodes.len()-1, &query_first, &query_last, &mut count, &mut overlap, &mut visited);
 
         return (count, overlap, visited);
     }
 
     fn query_node(
-            &self, idx: usize, first: I32x8, last: I32x8,
+            &self, idx: usize, query_first: &I32x8, query_last: &I32x8,
             count: &mut usize, overlap: &mut usize, visited: &mut usize) {
         let node = &self.nodes[idx];
 
-        // TODO: do interval comparison avx stuff
-
-        // TODO: iterate through the hits somehow, traversing into children
-
-        // TODO: call either query_node or query_leaf for each hit
+        if node.leaf_children {
+            for i in interval_chunk_overlaps(
+                    &query_first, &query_last,
+                    &node.minfirst, &node.maxlast, node.num_children) {
+                self.query_leaf(
+                    node.child_start[i] as usize, node.child_len[i] as usize,
+                    query_first, query_last, count, overlap, visited);
+            }
+        } else {
+            for i in interval_chunk_overlaps(
+                    query_first, query_last,
+                    &node.minfirst, &node.maxlast, node.num_children) {
+                self.query_node(
+                    node.child_start[i] as usize,
+                    query_first, query_last, count, overlap, visited)
+            }
+        }
     }
 
     fn query_leaf(
-            &self, idx: usize, leaflen: usize, first: I32x8, last: I32x8,
+            &self, idx: usize, leaflen: usize, query_first: &I32x8, query_last: &I32x8,
             count: &mut usize, overlap: &mut usize, visited: &mut usize) {
 
-        // TODO:
-        // really need to figure out how to set up some kind of mask
-        // to deal with unaligned data.
-        // here we can do the interval comparison stuff again
-
+        let chunk_size = I32x8::lanes();
+        let num_chunks = cld(leaflen, chunk_size);
+        for i in 0..num_chunks {
+            let mask = leaflen.min((i+1)*chunk_size) - i*chunk_size;
+            assert!(mask > 0);
+            assert!(mask <= I32x8::lanes());
+            for j in interval_chunk_overlaps(
+                    query_first, query_last,
+                    &self.keys[idx+i].firsts, &self.keys[idx+i].lasts, mask as u8) {
+                *count += 1;
+                // TODO: compute overlap (with avx?). It's kind of a pain
+                // to extract specific values.
+            }
+        }
+        *visited += 1;
     }
 }
 
