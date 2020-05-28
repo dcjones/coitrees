@@ -22,6 +22,7 @@ fn cld(x: usize, y: usize) -> usize {
 
 
 // wrapper for avx integer type
+#[derive(Copy, Clone)]
 struct I32x8 {
     x: __m256i,
 }
@@ -219,6 +220,7 @@ struct IntervalChunk {
 }
 
 // B+-tree internal node type
+#[derive(Copy, Clone)]
 struct Node {
     // Each internal node has 8 children,
     // with 32-bit keys, stored in a 256bit avx2 register.
@@ -355,7 +357,6 @@ impl<T> COITree<T> where T: std::marker::Copy {
         while curr_layer.len() > 1 {
             // divvy current layer into a new layer
             let num_parents = cld(curr_layer.len(), node_size);
-
             for i in 0..num_parents {
                 let num_children = curr_layer.len().min((i+1)*node_size) - i*node_size;
                 assert!(num_children > 0);
@@ -385,11 +386,45 @@ impl<T> COITree<T> where T: std::marker::Copy {
             curr_layer = curr_layer.end..nodes.len()
         }
 
-        // TODO: We should consider reordering nodes. Possible in veb order.
-        // current buttome-up order is probably pretty bad.
+        // reorder nodes in pre-order
+        let mut reorder: Vec<usize> = Vec::with_capacity(nodes.len());
+        let mut reorder_rev = vec![0; nodes.len()];
+        let mut stack: Vec<usize> = Vec::new();
+
+        if !nodes.is_empty() {
+            stack.push(nodes.len() - 1);
+        }
+
+        while !stack.is_empty() {
+            let i = stack.pop().unwrap();
+            reorder.push(i);
+            reorder_rev[i] = reorder.len() - 1;
+            if !nodes[i].leaf_children {
+                for j in 0..nodes[i].num_children {
+                    stack.push(nodes[i].child_start[j as usize] as usize);
+                }
+            }
+        }
+        assert!(reorder.len() == nodes.len());
+
+        // fix indexes
+        for node in &mut nodes {
+            if !node.leaf_children {
+                for j in 0..node.num_children {
+                    node.child_start[j as usize] =
+                        reorder_rev[node.child_start[j as usize] as usize] as u32;
+                }
+            }
+        }
+
+        // reorder
+        let mut nodes_reorder: Vec<Node> = nodes.clone();
+        for (i, node) in reorder_rev.iter().zip(nodes) {
+            nodes_reorder[*i] = node;
+        }
 
         return COITree {
-            nodes: nodes,
+            nodes: nodes_reorder,
             keys: keys,
             metadata: metadata,
         }
@@ -404,7 +439,8 @@ impl<T> COITree<T> where T: std::marker::Copy {
         let mut visited = 0;
 
         self.query_node(
-            self.nodes.len()-1, &query_first, &query_last, &mut count, &mut overlap, &mut visited);
+            0, &query_first, &query_last, &mut count, &mut overlap, &mut visited);
+            // self.nodes.len()-1, &query_first, &query_last, &mut count, &mut overlap, &mut visited);
 
         return (count, overlap, visited);
     }
@@ -414,14 +450,10 @@ impl<T> COITree<T> where T: std::marker::Copy {
             count: &mut usize, overlap: &mut usize, visited: &mut usize) {
         let node = &self.nodes[idx];
 
-        // eprintln!("minfirst: {}", node.minfirst);
-        // eprintln!("maxlast: {}", node.maxlast);
-
         if node.leaf_children {
             for i in interval_chunk_overlaps(
                     &query_first, &query_last,
                     &node.minfirst, &node.maxlast, node.num_children) {
-                // eprintln!("i: {}", i);
                 self.query_leaf(
                     node.child_start[i] as usize, node.child_len[i] as usize,
                     query_first, query_last, count, overlap, visited);
@@ -430,7 +462,6 @@ impl<T> COITree<T> where T: std::marker::Copy {
             for i in interval_chunk_overlaps(
                     query_first, query_last,
                     &node.minfirst, &node.maxlast, node.num_children) {
-                // eprintln!("i: {}", i);
                 self.query_node(
                     node.child_start[i] as usize,
                     query_first, query_last, count, overlap, visited)
@@ -442,7 +473,6 @@ impl<T> COITree<T> where T: std::marker::Copy {
             &self, idx: usize, leaflen: usize, query_first: &I32x8, query_last: &I32x8,
             count: &mut usize, overlap: &mut usize, visited: &mut usize) {
 
-        // eprintln!("leaf");
         let chunk_size = I32x8::lanes();
         let num_chunks = cld(leaflen, chunk_size);
         for i in 0..num_chunks {
