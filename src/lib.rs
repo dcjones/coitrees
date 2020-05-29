@@ -148,7 +148,6 @@ fn overlaps(first_a: i32, last_a: i32, first_b: i32, last_b: i32) -> bool {
 }
 
 
-// TODO: make all these usize params u32s
 // Used by `traverse` to keep record tree metadata.
 #[derive(Copy, Clone, Debug, Default)]
 struct TraversalInfo {
@@ -241,27 +240,27 @@ fn stable_ternary_tree_partition(
 
     // bottom left
     let mut bl = start;
-    for i in start..end {
-        if info[input[i]].depth > pivot_depth && info[input[i]].inorder < pivot_dfs {
-            output[bl] = input[i];
+    for i in &input[start..end] {
+        if info[*i].depth > pivot_depth && info[*i].inorder < pivot_dfs {
+            output[bl] = *i;
             bl += 1;
         }
     }
 
     // top
     let mut t = bl;
-    for i in start..end {
-        if info[input[i]].depth <= pivot_depth {
-            output[t] = input[i];
+    for i in &input[start..end] {
+        if info[*i].depth <= pivot_depth {
+            output[t] = *i;
             t += 1;
         }
     }
 
     // bottom right
     let mut br = t;
-    for i in start..end {
-        if info[input[i]].depth > pivot_depth && info[input[i]].inorder > pivot_dfs {
-            output[br] = input[i];
+    for i in &input[start..end] {
+        if info[*i].depth > pivot_depth && info[*i].inorder > pivot_dfs {
+            output[br] = *i;
             br += 1;
         }
     }
@@ -472,7 +471,6 @@ fn radix_sort_nodes<T>(nodes: &mut [IntervalNode<T>], tmp: &mut [IntervalNode<T>
     }
 
     let mut count = 0;
-    let n = nodes.len();
 
     const R: usize = 16;
     const K: usize = 0xffff+1;
@@ -485,12 +483,12 @@ fn radix_sort_nodes<T>(nodes: &mut [IntervalNode<T>], tmp: &mut [IntervalNode<T>
     let mut from = nodes;
     let mut to   = tmp;
     while count < 32/R {
-        for i in 0..K {
-            radix_counts[i] = 0;
+        for radix_count in &mut radix_counts {
+            *radix_count = 0;
         }
 
-        for i in 0..n {
-            radix_counts[((from[i].first >> shift) & MASK) as usize] += 1;
+        for node in &*from {
+            radix_counts[((node.first >> shift) & MASK) as usize] += 1;
         }
 
         // make counts cumulative
@@ -504,9 +502,9 @@ fn radix_sort_nodes<T>(nodes: &mut [IntervalNode<T>], tmp: &mut [IntervalNode<T>
         }
         radix_counts[0] = 0;
 
-        for i in 0..n {
-            let radix = ((from[i].first >> shift) & MASK) as usize;
-            to[radix_counts[radix] as usize] = from[i];
+        for node in &*from {
+            let radix = ((node.first >> shift) & MASK) as usize;
+            to[radix_counts[radix] as usize] = *node;
             radix_counts[radix] += 1;
         }
 
