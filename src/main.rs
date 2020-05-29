@@ -14,8 +14,6 @@ extern crate libc;
 type GenericError = Box<dyn Error>;
 
 
-
-
 fn parse_bed_line(line: &[u8]) -> (&str, &str, &str, i32, i32) {
     let mut p = 0;
     while p < line.len()-1 && line[p] != b'\t' {
