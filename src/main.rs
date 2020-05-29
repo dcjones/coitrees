@@ -4,10 +4,13 @@ use std::str;
 use std::time::Instant;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use coitrees::{COITree, IntervalNode};
+use coitrees::{COITree, IntervalNode, SortedQuerent};
 
 extern crate fnv;
 use fnv::FnvHashMap;
+
+extern crate clap;
+use clap::{Arg, App};
 
 extern crate libc;
 
@@ -137,16 +140,84 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
 }
 
 
-fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() < 3 {
-        println!("Must specify file name.");
-        std::process::exit(1);
+fn query_bed_files_with_sorted_querent(filename_a: &str, filename_b: &str) -> Result<(), GenericError> {
+    let trees = read_bed_file(filename_a)?;
+
+    let file = File::open(filename_b)?;
+    let mut rdr = BufReader::new(file);
+    let mut line = Vec::new();
+
+    let mut total_count = 0;
+    let now = Instant::now();
+
+    let mut querents = FnvHashMap::<String, SortedQuerent<()>>::default();
+    for (seqname, tree) in &trees {
+        querents.insert(seqname.clone(), SortedQuerent::new(tree));
     }
 
-    let result = query_bed_files(&args[1], &args[2]);
-    if let Err(err) = result {
-        println!("error: {}", err)
+    while rdr.read_until(b'\n', &mut line).unwrap() > 0 {
+        let (seqname, _first_str, _last_str, first, last) =
+            parse_bed_line(&line);
+
+        let mut count = 0;
+        if let Some(querent) = querents.get_mut(seqname) {
+            querent.query(first, last, |_| count += 1);
+        }
+
+        // unfortunately printing in c is quite a bit faster than rust
+        unsafe {
+            let linelen = line.len();
+            line[linelen-1] = b'\0';
+            libc::printf(
+                b"%s\t%u\n\0".as_ptr() as *const i8,
+                line.as_ptr() as *const i8,
+                count as u32);
+        }
+
+        total_count += count;
+
+        line.clear();
+    }
+
+    eprintln!("overlap: {}s", now.elapsed().as_millis() as f64 / 1000.0);
+    eprintln!("total overlaps: {}", total_count);
+
+    return Ok(());
+}
+
+
+fn main() {
+    let matches = App::new("coitrees")
+        .about("Find overlaps between two groups of intervals")
+        .arg(Arg::with_name("input1")
+            .about("intervals to index")
+            .value_name("intervals.bed")
+            .required(true)
+            .index(1))
+        .arg(Arg::with_name("input2")
+            .about("query intervals")
+            .value_name("queries.bed")
+            .required(true)
+            .index(2))
+        .arg(Arg::with_name("use_sorted_querent")
+            .long("--dense-sorted-queries")
+            .short('s')
+            .about("use alternative search strategy that's faster if queries are sorted and tend to overlap"))
+        .get_matches();
+
+    let input1 = matches.value_of("input1").unwrap();
+    let input2 = matches.value_of("input2").unwrap();
+
+    if matches.is_present("use_sorted_querent") {
+        let result = query_bed_files_with_sorted_querent(input1, input2);
+        if let Err(err) = result {
+            println!("error: {}", err)
+        }
+    } else {
+        let result = query_bed_files(input1, input2);
+        if let Err(err) = result {
+            println!("error: {}", err)
+        }
     }
 }
 

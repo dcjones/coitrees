@@ -10,3 +10,4 @@ debug = true
 [dependencies]
 fnv = "1.0.3"
 libc = "0.2"
+clap = "3.0.0-beta.1"

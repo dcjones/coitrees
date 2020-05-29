@@ -1,4 +1,6 @@
 
+use std::marker::Copy;
+
 // small subtrees at the bottom of the tree are stored in sorted order
 // This gives the upper bound on the size of such subtrees.
 const SIMPLE_SUBTREE_CUTOFF: u32 = 32;
@@ -7,7 +9,7 @@ const SIMPLE_SUBTREE_CUTOFF: u32 = 32;
 // Nodes can be "simple" meaning they just give a span of sorted intervals
 // rather than a left and right child.
 #[derive(Copy, Clone, Debug)]
-pub struct IntervalNode<T> where T: std::marker::Copy
+pub struct IntervalNode<T> where T: Copy
  {
     // subtree interval
     subtree_last: i32,
@@ -25,7 +27,7 @@ pub struct IntervalNode<T> where T: std::marker::Copy
 }
 
 
-impl<T> IntervalNode<T> where T: std::marker::Copy {
+impl<T> IntervalNode<T> where T: Copy {
     pub fn new(first: i32, last: i32, metadata: T) -> IntervalNode<T> {
         return IntervalNode{
             subtree_last: last,
@@ -39,21 +41,21 @@ impl<T> IntervalNode<T> where T: std::marker::Copy {
 }
 
 
-pub struct COITree<T>  where T: std::marker::Copy {
+pub struct COITree<T>  where T: Copy {
     nodes: Vec<IntervalNode<T>>,
     root_idx: usize
 }
 
 
 
-impl<T> COITree<T> where T: std::marker::Copy {
+impl<T> COITree<T> where T: Copy {
     pub fn new(nodes: Vec<IntervalNode<T>>) -> COITree<T> {
         let (nodes, root_idx) = veb_order(nodes);
         return COITree { nodes: nodes, root_idx: root_idx };
     }
 
     // find overlaps and call `visit` on every overlapping node
-    pub fn query<F>(&self, first: i32, last: i32, mut visit: F) where F: FnMut(&IntervalNode<T>) {
+    pub fn query<'a, F>(&'a self, first: i32, last: i32, mut visit: F) where F: FnMut(&'a IntervalNode<T>) {
         query_recursion(&self.nodes, self.root_idx, first, last, &mut visit);
     }
 
@@ -67,21 +69,21 @@ impl<T> COITree<T> where T: std::marker::Copy {
 
 // Recursively count overlaps between the tree specified by `nodes` and a
 // query interval specified by `first`, `last`.
-fn query_recursion<T, F>(
-        nodes: &[IntervalNode<T>], root_idx: usize, first: i32, last: i32,
-        visit: &mut F) where T: std::marker::Copy, F: FnMut(&IntervalNode<T>) {
+fn query_recursion<'a, T, F>(
+        nodes: &'a [IntervalNode<T>], root_idx: usize, first: i32, last: i32,
+        visit: &mut F) where T: Copy, F: FnMut(&'a IntervalNode<T>) {
 
-    let node = nodes[root_idx];
+    let node = &nodes[root_idx];
 
     if node.left == node.right { // simple subtree
         for node in &nodes[root_idx..root_idx + node.right as usize] {
             if overlaps(node.first, node.last, first, last) {
-                visit(&node);
+                visit(node);
             }
         }
     } else {
         if overlaps(node.first, node.last, first, last) {
-            visit(&node);
+            visit(node);
         }
 
         let left = node.left as usize;
@@ -104,7 +106,7 @@ fn query_recursion<T, F>(
 // query_recursion but just count number of overlaps
 fn query_recursion_count<T>(
         nodes: &[IntervalNode<T>], root_idx: usize, first: i32, last: i32) -> usize
-            where T: std::marker::Copy {
+            where T: Copy {
 
     let node = nodes[root_idx];
 
@@ -141,6 +143,113 @@ fn query_recursion_count<T>(
 }
 
 
+// Used to perform dense sorted queries more efficiently by leveraging
+// what was learned from the previous query to speed up the current one, if
+// the current query is a nearby successor to the previous.
+pub struct SortedQuerent<'a, T> where T: Copy {
+    tree: &'a COITree<T>,
+    prev_first: i32,
+    prev_last: i32,
+    overlapping_intervals: Vec<&'a IntervalNode<T>>,
+}
+
+
+impl<'a, T> SortedQuerent<'a, T> where T: Copy {
+    pub fn new(tree: &'a COITree<T>) -> SortedQuerent<'a, T> {
+        let overlapping_intervals: Vec<&IntervalNode<T>> = Vec::new();
+        return SortedQuerent {
+            tree: tree,
+            prev_first: -1,
+            prev_last: -1,
+            overlapping_intervals: overlapping_intervals,
+        };
+    }
+
+    pub fn query<F>(&mut self, first: i32, last: i32, mut visit: F) where F: FnMut(&IntervalNode<T>) {
+
+        // not overlaping or preceding
+        if first < self.prev_first || first > self.prev_last {
+            // no overlap with previous query. have to resort to regular query strategy
+            self.overlapping_intervals.clear();
+            self.tree.query(first, last, |node| self.overlapping_intervals.push(node));
+        } else {
+            // successor query, exploit the overlap
+
+            // delete previously overlapping intervals with end in [prev_first, first-1]
+            if self.prev_first < first {
+                let mut i = 0;
+                while i < self.overlapping_intervals.len() {
+                    if self.overlapping_intervals[i].last < first {
+                        self.overlapping_intervals.swap_remove(i);
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+
+            // delete previously overlapping intervals with start in [last+1, prev_end]
+            if self.prev_last > last {
+                let mut i = 0;
+                while i < self.overlapping_intervals.len() {
+                    if self.overlapping_intervals[i].first > last {
+                        self.overlapping_intervals.swap_remove(i);
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+
+            // add any interval that start in [prev_last+1, last]
+            if self.prev_last < last {
+                sorted_querent_query_firsts(
+                    &self.tree.nodes, self.tree.root_idx,
+                    self.prev_last+1, last, &mut self.overlapping_intervals);
+            }
+        }
+
+        // call visit on everything
+        for overlapping_interval in &self.overlapping_intervals {
+            visit(overlapping_interval);
+        }
+
+        self.prev_first = first;
+        self.prev_last = last;
+    }
+}
+
+
+// find any intervals in the tree with their first value in [first, last]
+fn sorted_querent_query_firsts<'a, T>(
+        nodes: &'a [IntervalNode<T>], root_idx: usize, first: i32, last: i32,
+        overlapping_intervals: &mut Vec<&'a IntervalNode<T>>) where T: Copy {
+
+    let node = &nodes[root_idx];
+
+    if node.left == node.right { // simple subtree
+        for node in &nodes[root_idx..root_idx + node.right as usize] {
+            if first <= node.first && node.first <= last {
+                overlapping_intervals.push(node);
+            }
+        }
+    }
+    else {
+        if first <= node.first && node.first <= last {
+            overlapping_intervals.push(node);
+        }
+
+        let left = node.left as usize;
+        if left < u32::max_value() as usize && first <= node.first {
+            sorted_querent_query_firsts(nodes, left, first, last, overlapping_intervals);
+        }
+
+        let right = node.right as usize;
+        if right < u32::max_value() as usize && last >= node.first {
+            sorted_querent_query_firsts(nodes, right, first, last, overlapping_intervals);
+        }
+    }
+}
+
+
 // True iff the two intervals overlap.
 #[inline(always)]
 fn overlaps(first_a: i32, last_a: i32, first_b: i32, last_b: i32) -> bool {
@@ -164,7 +273,7 @@ struct TraversalInfo {
 // dfs traversal of an implicit bst computing dfs number, node depth, subtree
 // size, and left and right pointers.
 fn traverse<T>(nodes: &mut [IntervalNode<T>]) -> Vec<TraversalInfo>
-        where T: std::marker::Copy {
+        where T: Copy {
     let n = nodes.len();
     let mut info = vec![TraversalInfo::default(); n];
     let mut inorder = 0;
@@ -184,7 +293,7 @@ fn traverse_recursion<T>(
         depth: u32,
         inorder: &mut u32,
         preorder: &mut u32) -> (u32, u32)
-        where T: std::marker::Copy {
+        where T: Copy {
 
     if start >= end {
         return (u32::max_value(), 0);
@@ -273,7 +382,7 @@ fn stable_ternary_tree_partition(
 
 // put nodes in van Emde Boas order
 fn veb_order<T>(mut nodes: Vec<IntervalNode<T>>) -> (Vec<IntervalNode<T>>, usize)
-        where T: std::marker::Copy {
+        where T: Copy {
 
     // let now = Instant::now();
     // nodes.sort_unstable_by_key(|node| node.first);
@@ -360,7 +469,7 @@ fn veb_order<T>(mut nodes: Vec<IntervalNode<T>>) -> (Vec<IntervalNode<T>>, usize
 
 // Traverse the tree and return the size, used as a basic sanity check.
 fn compute_tree_size<T>(nodes: &[IntervalNode<T>], root_idx: usize) -> usize
-        where T: std::marker::Copy {
+        where T: Copy {
 
     let mut subtree_size = 1;
 
@@ -463,7 +572,7 @@ fn veb_order_recursion(
 // on start position. tmp is temporary space for the first pass of equal length
 // to nodes.
 fn radix_sort_nodes<T>(nodes: &mut [IntervalNode<T>], tmp: &mut [IntervalNode<T>])
-        where T: std::marker::Copy {
+        where T: Copy {
 
     let mut max_first = 0;
     for node in &*nodes {
