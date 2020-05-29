@@ -83,20 +83,24 @@ fn query_recursion<T>(
 
     let node = nodes[root_idx];
 
+    *visited += 1;
+    if overlaps(node.first, node.last, first, last) {
+        *count += 1;
+    }
+
     if node.left == node.right { // simple subtree
-        for k in root_idx..root_idx + node.right as usize {
+        for k in root_idx+1..root_idx + node.right as usize {
             let node = nodes[k];
-            if overlaps(node.first, node.last, first, last) {
-                *count += 1;
-                *visited += 1;
+            if node.first <= last {
+                if node.last >= first {
+                    *count += 1;
+                    *visited += 1;
+                }
+            } else {
+                break;
             }
         }
     } else {
-        *visited += 1;
-        if overlaps(node.first, node.last, first, last) {
-            *count += 1;
-        }
-
         let left = node.left as usize;
         if left < u32::max_value() as usize {
             if nodes[left].subtree_last >= first {
@@ -378,6 +382,10 @@ fn veb_order_recursion(
     if childless && info[idxs[start]].subtree_size <= SIMPLE_SUBTREE_CUTOFF {
         assert!(n == info[idxs[start]].subtree_size);
         info[idxs[start]].simple = true;
+
+        // reorder all the children are sorted by start position
+        // this is useful in query so we can bail as soon as first > query_last
+        idxs[start+1..end].sort_unstable_by_key(|i| info[*i].inorder);
 
         if parity {
             tmp[start..end].copy_from_slice(&idxs[start..end]);
