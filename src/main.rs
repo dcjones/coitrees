@@ -4,7 +4,7 @@ use std::str;
 use std::time::Instant;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use coitree::{COITree, IntervalNode};
+use coitrees::{COITree, IntervalNode};
 
 extern crate fnv;
 use fnv::FnvHashMap;

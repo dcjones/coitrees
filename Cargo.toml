@@ -1,5 +1,5 @@
 [package]
-name = "coitree"
+name = "coitrees"
 version = "0.1.0"
 authors = ["Daniel C. Jones <dcjones@cs.washington.edu>"]
 edition = "2018"
