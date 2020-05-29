@@ -52,34 +52,24 @@ impl<T> COITree<T> where T: std::marker::Copy {
         return COITree { nodes: nodes, root_idx: root_idx };
     }
 
-    // simple overlap query returning a tuple with (overlap, count, visited)
-    // overlap gives the number of overlaping bases in self
-    // count the number of intervals that overlap the query
-    // visited gives the number of tree nodes visited
-    // pub fn query(&self, first: i32, last: i32) -> (usize, usize, usize) {
-    //     let mut count = 0;
-    //     let mut overlap = 0;
-    //     let mut visited = 0;
-    //     query_recursion(
-    //         &self.nodes, 0, first, last, &mut count, &mut overlap, &mut visited);
-    //     return (count, overlap, visited);
-    // }
-    pub fn query(&self, first: i32, last: i32) -> (usize, usize, usize) {
-        let mut count = 0;
-        let mut overlap = 0;
-        let mut visited = 0;
-        query_recursion(
-            &self.nodes, self.root_idx, first, last, &mut count, &mut overlap, &mut visited);
-        return (count, overlap, visited);
+    // find overlaps and call `visit` on every overlapping node
+    pub fn query<F>(&self, first: i32, last: i32, mut visit: F) where F: FnMut(&IntervalNode<T>) {
+        query_recursion(&self.nodes, self.root_idx, first, last, &mut visit);
+    }
+
+    // Count the number of overlaps. This can be done with `query`, but this
+    // is slightly faster in cases of a large number of overlaps.
+    pub fn query_count(&self, first: i32, last: i32) -> usize  {
+        return query_recursion_count(&self.nodes, self.root_idx, first, last);
     }
 }
 
 
 // Recursively count overlaps between the tree specified by `nodes` and a
 // query interval specified by `first`, `last`.
-fn query_recursion<T>(
+fn query_recursion<T, F>(
         nodes: &[IntervalNode<T>], root_idx: usize, first: i32, last: i32,
-        count: &mut usize, overlap: &mut usize, visited: &mut usize) where T: std::marker::Copy {
+        visit: &mut F) where T: std::marker::Copy, F: FnMut(&IntervalNode<T>) {
 
     let node = nodes[root_idx];
 
@@ -87,29 +77,73 @@ fn query_recursion<T>(
         for k in root_idx..root_idx + node.right as usize {
             let node = nodes[k];
             if overlaps(node.first, node.last, first, last) {
-                *count += 1;
-                *visited += 1;
+                visit(&node);
             }
         }
     } else {
-        *visited += 1;
         if overlaps(node.first, node.last, first, last) {
-            *count += 1;
+            visit(&node);
         }
 
         let left = node.left as usize;
         if left < u32::max_value() as usize {
             if nodes[left].subtree_last >= first {
-                query_recursion(nodes, left, first, last, count, overlap, visited);
+                query_recursion(nodes, left, first, last, visit);
             }
         }
 
         let right = node.right as usize;
         if right < u32::max_value() as usize {
             if overlaps(node.first, nodes[right].subtree_last, first, last) {
-                query_recursion(nodes, right, first, last, count, overlap, visited);
+                query_recursion(nodes, right, first, last, visit);
             }
         }
+    }
+}
+
+
+// query_recursion but just count number of overlaps
+fn query_recursion_count<T>(
+        nodes: &[IntervalNode<T>], root_idx: usize, first: i32, last: i32) -> usize
+            where T: std::marker::Copy {
+
+    let node = nodes[root_idx];
+
+    if node.left == node.right { // simple subtree
+        let mut count = 0;
+        // for k in root_idx..root_idx + node.right as usize {
+        //     let node = nodes[k];
+        //     if overlaps(node.first, node.last, first, last) {
+        //         count += 1;
+        //     }
+        // }
+        for node in &nodes[root_idx..root_idx + node.right as usize] {
+            if overlaps(node.first, node.last, first, last) {
+                count += 1;
+            }
+        }
+        return count;
+    } else {
+        let mut count = 0;
+        if overlaps(node.first, node.last, first, last) {
+            count += 1;
+        }
+
+        let left = node.left as usize;
+        if left < u32::max_value() as usize {
+            if nodes[left].subtree_last >= first {
+                count += query_recursion_count(nodes, left, first, last);
+            }
+        }
+
+        let right = node.right as usize;
+        if right < u32::max_value() as usize {
+            if overlaps(node.first, nodes[right].subtree_last, first, last) {
+                count += query_recursion_count(nodes, right, first, last);
+            }
+        }
+
+        return count;
     }
 }
 
@@ -119,7 +153,6 @@ fn query_recursion<T>(
 fn overlaps(first_a: i32, last_a: i32, first_b: i32, last_b: i32) -> bool {
     return first_a <= last_b && last_a >= first_b;
 }
-
 
 
 // Used by `traverse` to keep record tree metadata.

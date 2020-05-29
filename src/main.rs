@@ -95,7 +95,6 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
     let mut rdr = BufReader::new(file);
     let mut line = Vec::new();
 
-    let mut total_visits = 0;
     let mut total_count = 0;
     let now = Instant::now();
 
@@ -107,15 +106,10 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
             parse_bed_line(&line);
 
         let mut count = 0;
-        // let mut overlap = 0;
-        let mut visited = 0;
-        if let Some(seqname_tree) = tree.get(seqname) {
 
-            // let count_overlap = seqname_tree.query(first, last);
-            let count_overlap = seqname_tree.query(first, last);
-            count = count_overlap.0;
-            // overlap = count_overlap.1;
-            visited = count_overlap.2;
+        if let Some(seqname_tree) = tree.get(seqname) {
+            // seqname_tree.query(first, last, |_| count += 1);
+            count = seqname_tree.query_count(first, last);
         }
 
         // out.write(&line[..line.len()-1])?;
@@ -131,7 +125,6 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
                 count as u32);
         }
 
-        total_visits += visited;
         total_count += count;
 
         line.clear();
@@ -139,7 +132,6 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
 
     eprintln!("overlap: {}s", now.elapsed().as_millis() as f64 / 1000.0);
     eprintln!("total overlaps: {}", total_count);
-    eprintln!("total visits: {}", total_visits);
 
     return Ok(());
 }
