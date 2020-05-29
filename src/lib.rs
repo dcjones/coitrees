@@ -1,7 +1,7 @@
 
 // small subtrees at the bottom of the tree are stored in sorted order
 // This gives the upper bound on the size of such subtrees.
-const SIMPLE_SUBTREE_CUTOFF: usize = 32;
+const SIMPLE_SUBTREE_CUTOFF: u32 = 32;
 
 // interval node structure forming the tree
 // Nodes can be "simple" meaning they just give a span of sorted intervals
@@ -74,8 +74,7 @@ fn query_recursion<T, F>(
     let node = nodes[root_idx];
 
     if node.left == node.right { // simple subtree
-        for k in root_idx..root_idx + node.right as usize {
-            let node = nodes[k];
+        for node in &nodes[root_idx..root_idx + node.right as usize] {
             if overlaps(node.first, node.last, first, last) {
                 visit(&node);
             }
@@ -111,12 +110,6 @@ fn query_recursion_count<T>(
 
     if node.left == node.right { // simple subtree
         let mut count = 0;
-        // for k in root_idx..root_idx + node.right as usize {
-        //     let node = nodes[k];
-        //     if overlaps(node.first, node.last, first, last) {
-        //         count += 1;
-        //     }
-        // }
         for node in &nodes[root_idx..root_idx + node.right as usize] {
             if overlaps(node.first, node.last, first, last) {
                 count += 1;
@@ -155,15 +148,16 @@ fn overlaps(first_a: i32, last_a: i32, first_b: i32, last_b: i32) -> bool {
 }
 
 
+// TODO: make all these usize params u32s
 // Used by `traverse` to keep record tree metadata.
 #[derive(Copy, Clone, Debug, Default)]
 struct TraversalInfo {
-    depth: usize,
-    inorder: usize, // in-order visit number
-    preorder: usize, // pre-order visit number
-    subtree_size: usize,
-    left: usize,
-    right: usize,
+    depth: u32,
+    inorder: u32, // in-order visit number
+    preorder: u32, // pre-order visit number
+    subtree_size: u32,
+    left: u32,
+    right: u32,
     simple: bool // set by veb_order_recursion
 }
 
@@ -188,18 +182,18 @@ fn traverse_recursion<T>(
         info: &mut [TraversalInfo],
         start: usize,
         end: usize,
-        depth: usize,
-        inorder: &mut usize,
-        preorder: &mut usize) -> (usize, usize)
+        depth: u32,
+        inorder: &mut u32,
+        preorder: &mut u32) -> (u32, u32)
         where T: std::marker::Copy {
 
     if start >= end {
-        return (usize::max_value(), 0);
+        return (u32::max_value(), 0);
     }
 
     let root_idx = start + (end - start) / 2;
-    let mut left = usize::max_value();
-    let mut right = usize::max_value();
+    let mut left = u32::max_value();
+    let mut right = u32::max_value();
     let mut subtree_size = 1;
 
     nodes[root_idx].subtree_last = nodes[root_idx].last;
@@ -213,7 +207,7 @@ fn traverse_recursion<T>(
         left = left_;
         subtree_size += left_subtree_size;
         nodes[root_idx].subtree_last = nodes[root_idx].subtree_last.max(
-            nodes[left].subtree_last);
+            nodes[left as usize].subtree_last);
     }
 
     info[root_idx].inorder = *inorder;
@@ -225,14 +219,14 @@ fn traverse_recursion<T>(
         right = right_;
         subtree_size += right_subtree_size;
         nodes[root_idx].subtree_last = nodes[root_idx].subtree_last.max(
-            nodes[right].subtree_last);
+            nodes[right as usize].subtree_last);
     }
 
-    info[root_idx].subtree_size = subtree_size;
-    info[root_idx].left = left;
-    info[root_idx].right = right;
+    info[root_idx].subtree_size = subtree_size as u32;
+    info[root_idx].left = left as u32;
+    info[root_idx].right = right as u32;
 
-    return (root_idx, subtree_size)
+    return (root_idx as u32, subtree_size)
 }
 
 
@@ -242,7 +236,7 @@ fn traverse_recursion<T>(
 // the left and right of the root node
 fn stable_ternary_tree_partition(
         input: &[usize], output: &mut [usize],
-        info: &[TraversalInfo], pivot_depth: usize, pivot_dfs: usize,
+        info: &[TraversalInfo], pivot_depth: u32, pivot_dfs: u32,
         start: usize, end: usize) -> (usize, usize) {
 
     // bottom left
@@ -314,7 +308,7 @@ fn veb_order<T>(mut nodes: Vec<IntervalNode<T>>) -> (Vec<IntervalNode<T>>, usize
 
     // put in dfs order
     for i in &*idxs {
-        tmp[info[*i].preorder] = *i;
+        tmp[info[*i].preorder as usize] = *i;
     }
     let (idxs, tmp) = (tmp, idxs);
     let root_idx = idxs[0];
@@ -404,12 +398,12 @@ fn veb_order_recursion(
         start: usize, end: usize,
         childless: bool,
         parity: bool,
-        min_depth: usize, max_depth: usize) {
+        min_depth: u32, max_depth: u32) {
     let n = (start..end).len();
 
     // small subtrees are just put in sorted order
     if childless && info[idxs[start]].subtree_size <= SIMPLE_SUBTREE_CUTOFF {
-        assert!(n == info[idxs[start]].subtree_size);
+        assert!(n == info[idxs[start]].subtree_size as usize);
         info[idxs[start]].simple = true;
 
         if parity {
