@@ -1,0 +1,4 @@
+#!/bin/sh
+
+../target/release/coitrees --sorted $1 $2
+

@@ -1,0 +1,4 @@
+#!/bin/sh
+
+cd ~/src/cgranges/test/3rd-party/NCList
+./intervaldb $1 $2

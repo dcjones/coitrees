@@ -1,0 +1,4 @@
+#!/bin/sh
+
+../target/release/coitrees $1 $2
+

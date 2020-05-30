@@ -1,0 +1,4 @@
+#!/bin/sh
+
+cd ~/src/cgranges/test/3rd-party/AITree
+./AITree $1 $2
