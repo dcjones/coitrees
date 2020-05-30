@@ -98,7 +98,7 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
     let mut rdr = BufReader::new(file);
     let mut line = Vec::new();
 
-    let mut total_count = 0;
+    let mut total_count: usize = 0;
     let now = Instant::now();
 
     // let stdout = io::stdout();
@@ -108,7 +108,7 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
         let (seqname, _first_str, _last_str, first, last) =
             parse_bed_line(&line);
 
-        let mut count = 0;
+        let mut count: usize = 0;
 
         if let Some(seqname_tree) = tree.get(seqname) {
             // seqname_tree.query(first, last, |_| count += 1);
@@ -147,7 +147,7 @@ fn query_bed_files_with_sorted_querent(filename_a: &str, filename_b: &str) -> Re
     let mut rdr = BufReader::new(file);
     let mut line = Vec::new();
 
-    let mut total_count = 0;
+    let mut total_count: usize = 0;
     let now = Instant::now();
 
     let mut querents = FnvHashMap::<String, SortedQuerent<()>>::default();
@@ -159,7 +159,7 @@ fn query_bed_files_with_sorted_querent(filename_a: &str, filename_b: &str) -> Re
         let (seqname, _first_str, _last_str, first, last) =
             parse_bed_line(&line);
 
-        let mut count = 0;
+        let mut count: usize = 0;
         if let Some(querent) = querents.get_mut(seqname) {
             querent.query(first, last, |_| count += 1);
         }
@@ -200,7 +200,7 @@ fn main() {
             .required(true)
             .index(2))
         .arg(Arg::with_name("use_sorted_querent")
-            .long("--dense-sorted-queries")
+            .long("--sorted")
             .short('s')
             .about("use alternative search strategy that's faster if queries are sorted and tend to overlap"))
         .get_matches();
