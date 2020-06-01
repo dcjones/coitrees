@@ -43,7 +43,7 @@ million lines of `B`.
 | cgranges (`bedcov-cr -c`)           |      65.7s |      11.8s |     3.7s |     29.6s  |
 | AIList                              |      25.1s |      14.9s |     2.0s |     29.4s  |
 | CITree                              |      34.0s |      25.5s |     2.7s |    105.6s  |
-| NCList                              |      28.7s |      41.4s |     3.5s |     55.7s  |
+| NCList                              |      41.4s |      28.7s |     3.5s |     55.7s  |
 | AITree                              |      54.3s |      45.0s |     3.9s |    185.7s  |
 | `bedtools coverage -counts -sorted` |     868.3s |     371.9s |   315.9s |   4865.8s  |
 | `bedtools coverage -counts`         |     977.0s |     626.2s |   329.4s |   4690.8s  |
@@ -56,7 +56,7 @@ million lines of `B`.
 | cgranges (`bedcov-cr -c`)           |     100.3s |      20.4s |     6.3s |     35.6s |
 | AIList                              |      58.5s |      31.2s |     4.3s |     31.1s |
 | CITree                              |      74.3s |      34.9s |     5.3s |     82.2s |
-| NCList                              |      40.2s |      74.0s |     5.9s |     61.8s |
+| NCList                              |      74.0s |      40.2s |     5.9s |     61.8s |
 | AITree                              |     324.0s |     242.0s |    22.7s |   1473.0s |
 | `bedtools coverage -counts`         |    2040.1s |    1721.7s |   379.9s |  11098.0s |
 
