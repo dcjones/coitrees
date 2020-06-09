@@ -15,15 +15,15 @@ pub struct IntervalNode<T> where T: Copy
     subtree_last: i32,
 
     // interval
-    first: i32,
-    last: i32,
+    pub first: i32,
+    pub last: i32,
 
     // when this is the root of a simple subtree, left == right is the size
     // of the subtree, otherwise they are left, right childe pointers.
     left: u32,
     right: u32,
 
-    metadata: T,
+    pub metadata: T,
 }
 
 
@@ -45,7 +45,6 @@ pub struct COITree<T>  where T: Copy {
     nodes: Vec<IntervalNode<T>>,
     root_idx: usize
 }
-
 
 
 impl<T> COITree<T> where T: Copy {
