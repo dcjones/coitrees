@@ -92,21 +92,23 @@ impl<T> COITree<T> where T: Copy {
     }
 
     // Return the proportion of the query covered by intervals in the tree.
-    pub fn coverage(&self, first: i32, last: i32) -> f64 {
+    pub fn coverage(&self, first: i32, last: i32) -> (usize, usize) {
         assert!(last >= first);
 
         if self.is_empty() {
-            return 0.0;
+            return (0, 0);
         }
 
-        let (mut uncov_len, last_cov) = coverage_recursion(
+        let (mut uncov_len, last_cov, count) = coverage_recursion(
             &self.nodes, self.root_idx, first, last, first - 1);
 
         if last_cov < last {
             uncov_len += last - last_cov;
         }
 
-        return 1.0 - (uncov_len as f64 / (last - first + 1) as f64);
+        let cov = ((last - first + 1) as usize) - (uncov_len as usize);
+
+        return (count, cov);
     }
 }
 
@@ -192,12 +194,14 @@ fn query_recursion_count<T>(
 
 
 fn coverage_recursion<T>(
-        nodes: &[IntervalNode<T>], root_idx: usize, first: i32, last: i32, mut last_cov: i32) -> (i32, i32)
+        nodes: &[IntervalNode<T>], root_idx: usize,
+        first: i32, last: i32, mut last_cov: i32) -> (i32, i32, usize)
         where T: Copy {
 
     let node = &nodes[root_idx];
 
     if node.left == node.right { // simple subtree
+        let mut count = 0;
         let mut uncov_len = 0;
         for node in &nodes[root_idx..root_idx + node.right as usize] {
             if overlaps(node.first, node.last, first, last) {
@@ -205,19 +209,22 @@ fn coverage_recursion<T>(
                     uncov_len += node.first - (last_cov + 1);
                 }
                 last_cov = last_cov.max(node.last);
+                count += 1;
             }
         }
-        return (uncov_len, last_cov);
+        return (uncov_len, last_cov, count);
     } else {
         let mut uncov_len = 0;
+        let mut count = 0;
 
         let left = node.left as usize;
         if left < u32::max_value() as usize {
             if nodes[left].subtree_last >= first {
-                let (left_uncov_len, left_last_cov) =
+                let (left_uncov_len, left_last_cov, left_count) =
                     coverage_recursion(nodes, left, first, last, last_cov);
                 last_cov = left_last_cov;
                 uncov_len += left_uncov_len;
+                count += left_count;
             }
         }
 
@@ -226,19 +233,21 @@ fn coverage_recursion<T>(
                 uncov_len += node.first - (last_cov + 1);
             }
             last_cov = last_cov.max(node.last);
+            count += 1;
         }
 
         let right = node.right as usize;
         if right < u32::max_value() as usize {
             if overlaps(node.first, nodes[right].subtree_last, first, last) {
-                let (right_uncov_len, right_last_cov) =
+                let (right_uncov_len, right_last_cov, right_count) =
                     coverage_recursion(nodes, right, first, last, last_cov);
                 last_cov = right_last_cov;
                 uncov_len += right_uncov_len;
+                count += right_count;
             }
         }
 
-        return (uncov_len, last_cov);
+        return (uncov_len, last_cov, count);
     }
 }
 

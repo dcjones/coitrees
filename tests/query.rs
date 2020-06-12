@@ -27,46 +27,26 @@ fn brute_force_query<T, F>(
 
 // Brute coverage calculation. `intervals` must be sorted.
 fn brute_force_coverage<T>(
-        intervals: &[IntervalNode<T>], query_first: i32, query_last: i32) -> f64
+        intervals: &[IntervalNode<T>], query_first: i32, query_last: i32) -> (usize, usize)
             where T: Copy {
     let mut last_cov = query_first - 1;
     let mut uncov_len = 0;
+    let mut count = 0;
     for interval in intervals {
         if overlaps(interval.first, interval.last, query_first, query_last) {
             if interval.first > last_cov {
                 uncov_len += interval.first - (last_cov + 1);
             }
             last_cov = last_cov.max(interval.last);
+            count += 1;
         }
     }
     if last_cov < query_last {
         uncov_len += query_last - last_cov;
     }
 
-    return 1.0 - (uncov_len as f64) / ((query_last - query_first + 1) as f64);
-}
-
-
-fn print_brute_force_coverage<T>(
-        intervals: &[IntervalNode<T>], query_first: i32, query_last: i32) -> f64
-            where T: Copy {
-    let mut last_cov = query_first - 1;
-    let mut uncov_len = 0;
-    eprintln!("first, last = {}, {}", query_first, query_last);
-    for interval in intervals {
-        if overlaps(interval.first, interval.last, query_first, query_last) {
-            eprintln!("interval.first, interval.last = {}, {}", interval.first, interval.last);
-            if interval.first > last_cov {
-                uncov_len += interval.first - (last_cov + 1);
-            }
-            last_cov = last_cov.max(interval.last);
-        }
-    }
-    if last_cov < query_last {
-        uncov_len += query_last - last_cov;
-    }
-
-    return 1.0 - (uncov_len as f64) / ((query_last - query_first + 1) as f64);
+    let cov = ((query_last - query_first + 1) as usize) - (uncov_len as usize);
+    return (count, cov);
 }
 
 
@@ -98,14 +78,11 @@ fn check_queries(a: &COITree<u32>, b: &[IntervalNode<u32>], queries: &mut [(i32,
 
 fn check_coverage(a: &COITree<u32>, b: &[IntervalNode<u32>], queries: &mut [(i32, i32)]) {
     for (query_first, query_last) in queries {
-        let a_cover = a.coverage(*query_first, *query_last);
-        let b_cover = brute_force_coverage(b, *query_first, *query_last);
+        let (a_count, a_cover) = a.coverage(*query_first, *query_last);
+        let (b_count, b_cover) = brute_force_coverage(b, *query_first, *query_last);
 
-        if (a_cover - b_cover).abs() >= 1e-8 {
-            eprintln!("{} {}", a_cover, b_cover);
-            print_brute_force_coverage(b, *query_first, *query_last);
-        }
-        assert!((a_cover - b_cover).abs() < 1e-8);
+        assert_eq!(a_cover, b_cover);
+        assert_eq!(a_count, b_count);
     }
 }
 
