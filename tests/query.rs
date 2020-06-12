@@ -25,6 +25,51 @@ fn brute_force_query<T, F>(
 }
 
 
+// Brute coverage calculation. `intervals` must be sorted.
+fn brute_force_coverage<T>(
+        intervals: &[IntervalNode<T>], query_first: i32, query_last: i32) -> f64
+            where T: Copy {
+    let mut last_cov = query_first - 1;
+    let mut uncov_len = 0;
+    for interval in intervals {
+        if overlaps(interval.first, interval.last, query_first, query_last) {
+            if interval.first > last_cov {
+                uncov_len += interval.first - (last_cov + 1);
+            }
+            last_cov = last_cov.max(interval.last);
+        }
+    }
+    if last_cov < query_last {
+        uncov_len += query_last - last_cov;
+    }
+
+    return 1.0 - (uncov_len as f64) / ((query_last - query_first + 1) as f64);
+}
+
+
+fn print_brute_force_coverage<T>(
+        intervals: &[IntervalNode<T>], query_first: i32, query_last: i32) -> f64
+            where T: Copy {
+    let mut last_cov = query_first - 1;
+    let mut uncov_len = 0;
+    eprintln!("first, last = {}, {}", query_first, query_last);
+    for interval in intervals {
+        if overlaps(interval.first, interval.last, query_first, query_last) {
+            eprintln!("interval.first, interval.last = {}, {}", interval.first, interval.last);
+            if interval.first > last_cov {
+                uncov_len += interval.first - (last_cov + 1);
+            }
+            last_cov = last_cov.max(interval.last);
+        }
+    }
+    if last_cov < query_last {
+        uncov_len += query_last - last_cov;
+    }
+
+    return 1.0 - (uncov_len as f64) / ((query_last - query_first + 1) as f64);
+}
+
+
 // Run queries against both a COITree and by brute force and check that
 // they get the same results.
 fn check_queries(a: &COITree<u32>, b: &[IntervalNode<u32>], queries: &mut [(i32, i32)]) {
@@ -47,6 +92,20 @@ fn check_queries(a: &COITree<u32>, b: &[IntervalNode<u32>], queries: &mut [(i32,
         b_hits.sort();
 
         assert_eq!(a_hits, b_hits);
+    }
+}
+
+
+fn check_coverage(a: &COITree<u32>, b: &[IntervalNode<u32>], queries: &mut [(i32, i32)]) {
+    for (query_first, query_last) in queries {
+        let a_cover = a.coverage(*query_first, *query_last);
+        let b_cover = brute_force_coverage(b, *query_first, *query_last);
+
+        if (a_cover - b_cover).abs() >= 1e-8 {
+            eprintln!("{} {}", a_cover, b_cover);
+            print_brute_force_coverage(b, *query_first, *query_last);
+        }
+        assert!((a_cover - b_cover).abs() < 1e-8);
     }
 }
 
@@ -144,6 +203,7 @@ fn check_random_queries<F>(
         let (first, last) = random_interval(min_first, max_last, min_len, max_len);
         b.push(IntervalNode::new(first, last, i as u32));
     }
+    b.sort_unstable_by_key(|node| node.first);
 
     let a = COITree::new(b.clone());
 
@@ -161,7 +221,7 @@ fn check_random_queries_default<F>(n: usize, num_queries: usize, check: F)
 
     let max_last = 1000000;
     let min_len = 20;
-    let max_len = 10000;
+    let max_len = 2000;
 
     check_random_queries(
         n, num_queries, max_last, min_len, max_len, min_len, max_len, check);
@@ -177,45 +237,48 @@ const CHECKS: [fn(&COITree<u32>, &[IntervalNode<u32>], &mut [(i32, i32)]); 4] =
     ];
 
 #[test]
-fn test_query_empty_tree() {
+fn query_empty_tree() {
     for check in &CHECKS {
         check_random_queries_default(0, 1000, check);
     }
+    check_random_queries_default(0, 1000, check_coverage);
 }
 
 #[test]
-fn test_query_small_trees() {
-    for check in &CHECKS {
-        for n in 1..16 {
+fn query_small_trees() {
+    for n in 1..16 {
+        for check in &CHECKS {
             check_random_queries_default(n, 1000, check);
         }
+        check_random_queries_default(n, 1000, check_coverage);
     }
 }
 
 #[test]
-fn test_query_medium_tree() {
+fn query_medium_tree() {
     for check in &CHECKS {
         check_random_queries_default(10000, 1000, check);
     }
+    check_random_queries_default(10000, 1000, check_coverage);
 }
 
 
 #[test]
 fn query_singeton_intervals() {
     for check in &CHECKS {
-        check_random_queries(10000, 1000, 1000, 0, 0, 0, 0, check);
-        check_random_queries(10000, 1000, 1000, 0, 0, 10, 100, check);
+        check_random_queries(10000, 1000, 1000, 1, 1, 1,    1, check);
+        check_random_queries(10000, 1000, 1000, 1, 1, 10, 100, check);
     }
+    check_random_queries(10000, 1000, 1000, 1, 1, 1,    1, check_coverage);
+    check_random_queries(10000, 1000, 1000, 1, 1, 10, 100, check_coverage);
 }
 
 
 #[test]
 fn query_empty_intervals() {
     for check in &CHECKS {
-        check_random_queries(10000, 1000, 1000, 0, 1, 0, 1,    check);
-        check_random_queries(10000, 1000, 1000, 0, 1, 10, 100, check);
-        check_random_queries(10000, 1000, 1000, 0, 2, 0, 2,    check);
-        check_random_queries(10000, 1000, 1000, 0, 2, 10, 100, check);
+        check_random_queries(10000, 1000, 1000, 0, 0, 0,    0, check);
+        check_random_queries(10000, 1000, 1000, 0, 0, 10, 100, check);
     }
 }
 
