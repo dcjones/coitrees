@@ -121,7 +121,9 @@ fn query_recursion<'a, T, F>(
 
     if node.left == node.right { // simple subtree
         for node in &nodes[root_idx..root_idx + node.right as usize] {
-            if overlaps(node.first, node.last, first, last) {
+            if last < node.first {
+                break;
+            } else if first <= node.last {
                 visit(node);
             }
         }
@@ -157,7 +159,9 @@ fn query_recursion_count<T>(
     if node.left == node.right { // simple subtree
         let mut count = 0;
         for node in &nodes[root_idx..root_idx + node.right as usize] {
-            if overlaps(node.first, node.last, first, last) {
+            if last < node.first {
+                break;
+            } else if first <= node.last {
                 count += 1;
             }
         }
@@ -237,7 +241,6 @@ fn coverage_recursion<T>(
         return (uncov_len, last_cov);
     }
 }
-
 
 
 // Used to perform dense sorted queries more efficiently by leveraging
@@ -328,7 +331,9 @@ fn sorted_querent_query_firsts<'a, T>(
 
     if node.left == node.right { // simple subtree
         for node in &nodes[root_idx..root_idx + node.right as usize] {
-            if first <= node.first && node.first <= last {
+            if last < node.first {
+                break;
+            } else if first <= node.first {
                 overlapping_intervals.push(node);
             }
         }
