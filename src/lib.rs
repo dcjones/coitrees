@@ -38,6 +38,19 @@ impl<T> IntervalNode<T> where T: Copy {
             metadata: metadata
         };
     }
+
+    pub fn len(&self) -> i32 {
+        return (self.last - self.first + 1).max(0);
+    }
+}
+
+
+#[test]
+fn test_interval_len() {
+    assert_eq!(IntervalNode::new(1, -1, ()).len(), 0);
+    assert_eq!(IntervalNode::new(1, 0, ()).len(), 0);
+    assert_eq!(IntervalNode::new(1, 1, ()).len(), 1);
+    assert_eq!(IntervalNode::new(1, 2, ()).len(), 2);
 }
 
 
@@ -53,15 +66,29 @@ impl<T> COITree<T> where T: Copy {
         return COITree { nodes: nodes, root_idx: root_idx };
     }
 
+    pub fn len(&self) -> usize {
+        return self.nodes.len();
+    }
+
+    pub fn is_empty(&self) -> bool {
+        return self.nodes.is_empty();
+    }
+
     // find overlaps and call `visit` on every overlapping node
     pub fn query<'a, F>(&'a self, first: i32, last: i32, mut visit: F) where F: FnMut(&'a IntervalNode<T>) {
-        query_recursion(&self.nodes, self.root_idx, first, last, &mut visit);
+        if !self.is_empty() {
+            query_recursion(&self.nodes, self.root_idx, first, last, &mut visit);
+        }
     }
 
     // Count the number of overlaps. This can be done with `query`, but this
     // is slightly faster in cases of a large number of overlaps.
     pub fn query_count(&self, first: i32, last: i32) -> usize  {
-        return query_recursion_count(&self.nodes, self.root_idx, first, last);
+        if !self.is_empty() {
+            return query_recursion_count(&self.nodes, self.root_idx, first, last);
+        } else {
+            return 0;
+        }
     }
 }
 
@@ -165,6 +192,10 @@ impl<'a, T> SortedQuerent<'a, T> where T: Copy {
     }
 
     pub fn query<F>(&mut self, first: i32, last: i32, mut visit: F) where F: FnMut(&IntervalNode<T>) {
+
+        if self.tree.is_empty() {
+            return;
+        }
 
         // not overlaping or preceding
         if first < self.prev_first || first > self.prev_last {
@@ -386,6 +417,10 @@ fn veb_order<T>(mut nodes: Vec<IntervalNode<T>>) -> (Vec<IntervalNode<T>>, usize
     // let now = Instant::now();
     // nodes.sort_unstable_by_key(|node| node.first);
     let mut veb_nodes = nodes.clone();
+
+    if veb_nodes.is_empty() {
+        return (veb_nodes, 0);
+    }
 
     let mut nodes_presorted = true;
     for i in 1..nodes.len() {
