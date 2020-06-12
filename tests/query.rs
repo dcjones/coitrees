@@ -66,13 +66,42 @@ fn check_count_queries(a: &COITree<u32>, b: &[IntervalNode<u32>], queries: &mut 
 
 
 // check SortedQuerent queries against brute force
-fn check_sorted_querent_queries(a: &COITree<u32>, b: &[IntervalNode<u32>], queries: &mut [(i32, i32)]) {
+fn check_sorted_querent_queries(
+        a: &COITree<u32>, b: &[IntervalNode<u32>], queries: &mut [(i32, i32)]) {
     let mut a_hits: Vec<u32> = Vec::new();
     let mut b_hits: Vec<u32> = Vec::new();
 
     let mut qa = SortedQuerent::new(a);
 
     queries.sort();
+
+    for (query_first, query_last) in queries {
+        a_hits.clear();
+        b_hits.clear();
+
+        qa.query(*query_first, *query_last, |node| {
+            a_hits.push(node.metadata)
+        });
+
+        brute_force_query(b, *query_first, *query_last, |node| {
+            b_hits.push(node.metadata)
+        });
+
+        a_hits.sort();
+        b_hits.sort();
+
+        assert_eq!(a_hits, b_hits);
+    }
+}
+
+
+// check that SortedQuerent still works even when queries are unsorted
+fn check_sorted_querent_unsorted_queries(
+        a: &COITree<u32>, b: &[IntervalNode<u32>], queries: &mut [(i32, i32)]) {
+    let mut a_hits: Vec<u32> = Vec::new();
+    let mut b_hits: Vec<u32> = Vec::new();
+
+    let mut qa = SortedQuerent::new(a);
 
     for (query_first, query_last) in queries {
         a_hits.clear();
@@ -139,8 +168,13 @@ fn check_random_queries_default<F>(n: usize, num_queries: usize, check: F)
 }
 
 
-const CHECKS: [fn(&COITree<u32>, &[IntervalNode<u32>], &mut [(i32, i32)]); 3] =
-    [check_queries, check_count_queries, check_sorted_querent_queries];
+const CHECKS: [fn(&COITree<u32>, &[IntervalNode<u32>], &mut [(i32, i32)]); 4] =
+    [
+        check_queries,
+        check_count_queries,
+        check_sorted_querent_queries,
+        check_sorted_querent_unsorted_queries
+    ];
 
 #[test]
 fn test_query_empty_tree() {
