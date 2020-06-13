@@ -1,4 +1,4 @@
 #!/bin/sh
 
-~/src/cgranges/test/bedcov-itree $1 $2
+~/src/cgranges/test/bedcov-itree-nocov $1 $2
 

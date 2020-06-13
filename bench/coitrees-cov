@@ -1,0 +1,4 @@
+#!/bin/sh
+
+../target/release/coitrees --coverage $1 $2
+

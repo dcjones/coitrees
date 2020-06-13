@@ -38,27 +38,43 @@ million lines of `B`.
 
 |                                     |     A vs B |     B vs A |  A vs A  | B' vs B'   |
 | ----------------------------------- | ---------: | ---------: | -------: | ---------: |
-| coitrees (`--sorted`)               |  **13.0s** |      11.2s | **1.2s** |  **1.1s**  |
-| coitrees                            |      22.8s |  **10.7s** |     1.5s |     19.2s  |
-| cgranges (`bedcov-cr -c`)           |      65.7s |      11.8s |     3.7s |     29.6s  |
-| AIList                              |      25.1s |      14.9s |     2.0s |     29.4s  |
-| CITree                              |      34.0s |      25.5s |     2.7s |    105.6s  |
-| NCList                              |      41.4s |      28.7s |     3.5s |     55.7s  |
-| AITree                              |      54.3s |      45.0s |     3.9s |    185.7s  |
+| coitrees (`--sorted`)               |  **13.6s** |      12.2s | **1.3s** |  **1.2s**  |
+| coitrees                            |      22.8s |  **10.8s** |     1.6s |     15.6s  |
+| cgranges (`bedcov-cr -c`)           |      64.8s |      12.0s |     3.7s |     30.3s  |
+| AIList                              |      25.2s |      15.2s |     1.9s |     29.9s  |
+| CITree                              |      34.4s |      25.0s |     2.7s |     73.3s  |
+| NCList                              |      41.6s |      28.8s |     3.5s |     55.8s  |
+| AITree                              |      54.9s |      44.6s |     3.9s |    184.8s  |
 | `bedtools coverage -counts -sorted` |     868.3s |     371.9s |   315.9s |   4865.8s  |
 | `bedtools coverage -counts`         |     977.0s |     626.2s |   329.4s |   4690.8s  |
+
+### With coverage
+
+|                                     |     A vs B |     B vs A |  A vs A  | B' vs B'   |
+| ----------------------------------- | ---------: | ---------: | -------: | ---------: |
+| coitrees                            |  **29.7s** |  **11.7s** | **2.0s** | **18.8s**  |
+| cgranges                            |      69.9s |      14.1s |     4.0s |     54.8s  |
+| CITree                              |      50.2s |      47.1s |     3.8s |    268.6s  |
 
 ## Intervals in randomized order
 
 |                                     |     A vs B |     B vs A | A vs A  | B' vs B'   |
 | ----------------------------------- | ---------: | ---------: | -------: | --------: |
-| coitrees                            |  **48.6s** |  **16.1s** | **3.6s** | **25.4s** |
-| cgranges (`bedcov-cr -c`)           |     100.3s |      20.4s |     6.3s |     35.6s |
-| AIList                              |      58.5s |      31.2s |     4.3s |     31.1s |
-| CITree                              |      74.3s |      34.9s |     5.3s |     82.2s |
-| NCList                              |      74.0s |      40.2s |     5.9s |     61.8s |
-| AITree                              |     324.0s |     242.0s |    22.7s |   1473.0s |
+| coitrees                            |  **48.0s** |  **16.4s** | **3.6s** | **22.9s** |
+| cgranges (`bedcov-cr -c`)           |     101.7s |      20.2s |     6.2s |     36.8s |
+| AIList                              |      59.5s |      31.5s |     4.3s |     32.3s |
+| CITree                              |      79.8s |      34.3s |     5.6s |    114.0s |
+| NCList                              |      77.2s |      41.6s |     6.1s |     63.7s |
+| AITree                              |     341.1s |     259.5s |    23.6s |   1583.9s |
 | `bedtools coverage -counts`         |    2040.1s |    1721.7s |   379.9s |  11098.0s |
+
+### With coverage
+
+|                                     |     A vs B |     B vs A |  A vs A  | B' vs B'   |
+| ----------------------------------- | ---------: | ---------: | -------: | ---------: |
+| coitrees                            |  **62.0s** |  **17.4s** | **4.3s** | **26.7s**  |
+| cgranges                            |     106.1s |      22.3s |     6.6s |     61.7s  |
+| CITree                              |      91.8s |      55.4s |     6.6s |    312.7s  |
 
 # Discussion
 

@@ -7,13 +7,9 @@ function main()
         "B_" => joinpath(pwd(), "../test/test3.random.ucsc.bed"))
 
     random_methods = Dict(
-        "coitrees"      => "./coitrees",
-        "cgranges `-c`" => "./cgranges",
-        "CITree"        => "./CITree",
-        "AIList"        => "./AIList",
-        "AITree"        => "./AITree",
-        # "bedtools"      => "./bedtools",
-        "NCList"        => "./NCList"
+        "coitrees"      => "./coitrees-cov",
+        "cgranges"      => "./cgranges-cov",
+        "CITree"        => "./CITree-cov",
     )
 
     sorted_test_filenames = Dict(
@@ -22,14 +18,14 @@ function main()
         "B_" => joinpath(pwd(), "../test/test3.ucsc.bed"))
 
     sorted_methods = copy(random_methods)
-    sorted_methods["coitrees (`--sorted`)"] = "./coitrees-sorted"
+    # sorted_methods["coitrees (`--sorted`)"] = "./coitrees-sorted"
     # sorted_methods["bedtools (`-sorted`)"] = "./bedtools-sorted"
 
     tests = [("A", "B"), ("B", "A"), ("A", "A"), ("B_", "B_")]
 
     test_sets = [
-        ("sorted-bench.csv", sorted_test_filenames, sorted_methods),
-        ("random-bench.csv", random_test_filenames, random_methods)
+        ("sorted-cov-bench.csv", sorted_test_filenames, sorted_methods),
+        ("random-cov-bench.csv", random_test_filenames, random_methods)
     ]
 
     # run testts

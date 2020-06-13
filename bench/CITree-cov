@@ -1,0 +1,4 @@
+#!/bin/sh
+
+~/src/cgranges/test/bedcov-itree $1 $2
+

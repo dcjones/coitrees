@@ -1,0 +1,4 @@
+#!/bin/sh
+
+~/src/cgranges/test/bedcov-cr $1 $2
+
