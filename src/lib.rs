@@ -416,6 +416,31 @@ fn traverse_recursion<T>(
         return u32::max_value();
     }
 
+    if end - start <= SIMPLE_SUBTREE_CUTOFF as usize {
+        nodes[start].subtree_last = nodes[start].last;
+        for i in start..end {
+            info[i].depth = depth;
+            info[i].preorder = *preorder;
+            *preorder += 1;
+            info[i].inorder = *inorder;
+        }
+
+        // in these simple nodes, use subtree_last to store the last
+        // in in the list.
+        nodes[end-1].subtree_last = nodes[end-1].last;
+        for i in (start..end-1).rev() {
+            nodes[i].subtree_last = nodes[i].last.max(nodes[i+1].subtree_last);
+        }
+
+        info[start].subtree_size = (end - start) as u32;
+        info[start].simple = true;
+        info[start].left = info[start].subtree_size;
+        info[start].right = info[start].subtree_size;
+        *inorder += 1;
+
+        return start as u32;
+    }
+
     let root_idx = start + (end - start) / 2;
     let mut left = u32::max_value();
     let mut right = u32::max_value();
@@ -632,37 +657,8 @@ fn veb_order_recursion<T>(
         min_depth: u32, max_depth: u32) -> usize where T: Copy {
     let n = (start..end).len();
 
-    // small subtrees are put into sorted order and just searched through
-    // linearly. There is a little trickiness to this because we have to
-    // update the parent's child pointers and some other fields.
-    if childless && info[idxs[start]].subtree_size <= SIMPLE_SUBTREE_CUTOFF {
-        assert!(n == info[idxs[start]].subtree_size as usize);
-
-        let old_root = idxs[start];
-
-        idxs[start..end].sort_unstable_by_key(|i| info[*i].inorder);
-        info[idxs[start]].simple = true;
-        info[idxs[start]].subtree_size = info[old_root].subtree_size;
-        nodes[idxs[start]].subtree_last = nodes[old_root].subtree_last;
-
-        let parent = info[old_root as usize].parent;
-        if parent < u32::MAX {
-            if info[parent as usize].left == old_root as u32 {
-                info[parent as usize].left = idxs[start] as u32;
-            } else {
-                assert!(info[parent as usize].right == old_root as u32);
-                info[parent as usize].right = idxs[start] as u32;
-            }
-        }
-
-        if parity {
-            tmp[start..end].copy_from_slice(&idxs[start..end]);
-        }
-        return idxs[start];
-    }
-
-    // very small trees are already in order
-    if n <= 3 {
+    // very small trees and simple trees are already in order
+    if n <= 3 || info[idxs[start]].simple {
         if parity {
             tmp[start..end].copy_from_slice(&idxs[start..end]);
         }
@@ -690,19 +686,30 @@ fn veb_order_recursion<T>(
         let mut i = *part_start;
         while i < *part_end {
             assert!(info[idxs[i]].depth == bottom_subtree_depth);
-            let mut j = i+1;
-            let mut subtree_max_depth = info[idxs[i]].depth;
-            while j < *part_end && info[idxs[j]].depth != bottom_subtree_depth {
-                assert!(info[idxs[j]].depth > bottom_subtree_depth);
-                if info[idxs[j]].depth > subtree_max_depth {
-                    subtree_max_depth = info[idxs[j]].depth;
+
+            if info[idxs[i]].simple {
+                let j = i + info[idxs[i]].subtree_size as usize;
+                veb_order_recursion(
+                    idxs, tmp, info, nodes, i, j, true, !parity,
+                    bottom_subtree_depth, info[idxs[i]].depth);
+                i += info[idxs[i]].subtree_size as usize;
+            } else {
+                let mut j = i+1;
+                let mut subtree_max_depth = info[idxs[i]].depth;
+
+                while j < *part_end && info[idxs[j]].depth != bottom_subtree_depth {
+                    assert!(info[idxs[j]].depth > bottom_subtree_depth);
+                    if info[idxs[j]].depth > subtree_max_depth {
+                        subtree_max_depth = info[idxs[j]].depth;
+                    }
+                    j += 1;
                 }
-                j += 1;
+
+                veb_order_recursion(
+                    idxs, tmp, info, nodes, i, j, childless, !parity,
+                    bottom_subtree_depth, subtree_max_depth);
+                i = j;
             }
-            veb_order_recursion(
-                idxs, tmp, info, nodes, i, j, childless, !parity,
-                bottom_subtree_depth, subtree_max_depth);
-            i = j;
         }
     }
 
