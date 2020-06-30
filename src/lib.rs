@@ -56,14 +56,15 @@ fn test_interval_len() {
 
 pub struct COITree<T>  where T: Copy {
     nodes: Vec<IntervalNode<T>>,
-    root_idx: usize
+    root_idx: usize,
+    height: usize
 }
 
 
 impl<T> COITree<T> where T: Copy {
     pub fn new(nodes: Vec<IntervalNode<T>>) -> COITree<T> {
-        let (nodes, root_idx) = veb_order(nodes);
-        return COITree { nodes: nodes, root_idx: root_idx };
+        let (nodes, root_idx, height) = veb_order(nodes);
+        return COITree { nodes: nodes, root_idx: root_idx, height: height };
     }
 
     pub fn len(&self) -> usize {
@@ -109,6 +110,101 @@ impl<T> COITree<T> where T: Copy {
         let cov = ((last - first + 1) as usize) - (uncov_len as usize);
 
         return (count, cov);
+    }
+
+    pub fn iter(&self) -> COITreeIterator<T> {
+        let mut i = self.root_idx;
+        let mut stack: Vec<usize> = Vec::with_capacity(self.height);
+        while i < self.nodes.len() &&
+                self.nodes[i].left != u32::max_value() &&
+                self.nodes[i].left != self.nodes[i].right {
+            stack.push(i);
+            i = self.nodes[i].left as usize;
+        }
+
+        return COITreeIterator{
+            nodes: &self.nodes,
+            i: i,
+            count: 0,
+            stack: stack,
+        };
+    }
+}
+
+
+impl<'a, T> IntoIterator for &'a COITree<T> where T: Copy {
+    type Item = &'a IntervalNode<T>;
+    type IntoIter = COITreeIterator<'a, T>;
+
+    fn into_iter(self) -> COITreeIterator<'a, T> {
+        return self.iter();
+    }
+}
+
+
+// Iterate through nodes in a tree in sorted order
+pub struct COITreeIterator<'a, T> where T: Copy {
+    nodes: &'a Vec<IntervalNode<T>>,
+    i: usize, // current node
+    count: usize, // number generated so far
+    stack: Vec<usize>,
+}
+
+
+impl<'a, T> Iterator for COITreeIterator<'a, T> where T: Copy {
+    type Item = &'a IntervalNode<T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.i >= self.nodes.len() {
+            return None;
+        }
+
+        let node = &self.nodes[self.i];
+
+        if node.left == node.right { // simple node
+            if node.left > 1 {
+                self.i += 1;
+            } else {
+                if let Some(i) = self.stack.pop() {
+                    self.i = i;
+                } else {
+                    self.i = usize::max_value();
+                }
+            }
+        } else {
+            if node.right == u32::max_value() {
+                if let Some(i) = self.stack.pop() {
+                    self.i = i;
+                } else {
+                    self.i = usize::max_value();
+                }
+            } else {
+                let mut i = node.right as usize;
+
+                while self.nodes[i].left != u32::max_value()
+                        && self.nodes[i].left != self.nodes[i].right {
+                    self.stack.push(i);
+                    i = self.nodes[i].left as usize;
+                }
+
+                self.i = i;
+            }
+        }
+
+        self.count += 1;
+        return Some(node);
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.nodes.len() - self.count;
+        return (len, Some(len));
+    }
+}
+
+
+impl<'a, T> ExactSizeIterator for COITreeIterator<'a, T> where T: Copy {
+    fn len(&self) -> usize {
+        return self.nodes.len() - self.count;
     }
 }
 
@@ -499,7 +595,7 @@ fn stable_ternary_tree_partition(
 
 
 // put nodes in van Emde Boas order
-fn veb_order<T>(mut nodes: Vec<IntervalNode<T>>) -> (Vec<IntervalNode<T>>, usize)
+fn veb_order<T>(mut nodes: Vec<IntervalNode<T>>) -> (Vec<IntervalNode<T>>, usize, usize)
         where T: Copy {
 
     // let now = Instant::now();
@@ -508,7 +604,7 @@ fn veb_order<T>(mut nodes: Vec<IntervalNode<T>>) -> (Vec<IntervalNode<T>>, usize
     let n = veb_nodes.len();
 
     if veb_nodes.is_empty() {
-        return (veb_nodes, 0);
+        return (veb_nodes, 0, 0);
     }
 
     let mut nodes_presorted = true;
@@ -585,7 +681,7 @@ fn veb_order<T>(mut nodes: Vec<IntervalNode<T>>) -> (Vec<IntervalNode<T>>, usize
     // eprintln!("ordering: {}s", now.elapsed().as_millis() as f64 / 1000.0);
     assert!(compute_tree_size(&veb_nodes, root_idx) == n);
 
-    return (veb_nodes, root_idx);
+    return (veb_nodes, root_idx, max_depth as usize);
 }
 
 
@@ -642,8 +738,16 @@ fn veb_order_recursion<T>(
 
         idxs[start..end].sort_unstable_by_key(|i| info[*i].inorder);
         info[idxs[start]].simple = true;
-        info[idxs[start]].subtree_size = info[old_root].subtree_size;
+        let subtree_size = info[old_root].subtree_size;
+        info[idxs[start]].subtree_size = subtree_size;
         nodes[idxs[start]].subtree_last = nodes[old_root].subtree_last;
+
+        // all children nodes record the size of the remaining list
+        for i in 0..info[idxs[start]].subtree_size as usize {
+            let subtree_i_size = subtree_size - i as u32;
+            info[idxs[start+i]].subtree_size = subtree_i_size;
+            info[idxs[start+i]].simple = true;
+        }
 
         let parent = info[old_root as usize].parent;
         if parent < u32::MAX {
