@@ -52,8 +52,8 @@ fn parse_bed_line(line: &[u8]) -> (&str, &str, &str, i32, i32) {
 
 
 // Read a bed file into a COITree
-fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<()>>, GenericError> {
-    let mut nodes = FnvHashMap::<String, Vec<IntervalNode<()>>>::default();
+fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<(), u32>>, GenericError> {
+    let mut nodes = FnvHashMap::<String, Vec<IntervalNode<(), u32>>>::default();
 
     let now = Instant::now();
 
@@ -82,7 +82,7 @@ fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<()>>, GenericE
     eprintln!("sequences: {}", nodes.len());
 
     let now = Instant::now();
-    let mut trees = FnvHashMap::<String, COITree<()>>::default();
+    let mut trees = FnvHashMap::<String, COITree<(), u32>>::default();
     for (seqname, seqname_nodes) in nodes {
         trees.insert(seqname, COITree::new(seqname_nodes));
     }
@@ -92,8 +92,8 @@ fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<()>>, GenericE
 }
 
 
-fn read_bed_file_numbered(path: &str) -> Result<FnvHashMap<String, COITree<usize>>, GenericError> {
-    let mut nodes = FnvHashMap::<String, Vec<IntervalNode<usize>>>::default();
+fn read_bed_file_numbered(path: &str) -> Result<FnvHashMap<String, COITree<usize, u32>>, GenericError> {
+    let mut nodes = FnvHashMap::<String, Vec<IntervalNode<usize, u32>>>::default();
 
     let now = Instant::now();
 
@@ -122,7 +122,7 @@ fn read_bed_file_numbered(path: &str) -> Result<FnvHashMap<String, COITree<usize
     eprintln!("sequences: {}", nodes.len());
 
     let now = Instant::now();
-    let mut trees = FnvHashMap::<String, COITree<usize>>::default();
+    let mut trees = FnvHashMap::<String, COITree<usize, u32>>::default();
     for (seqname, seqname_nodes) in nodes {
         trees.insert(seqname, COITree::new(seqname_nodes));
     }
@@ -186,7 +186,7 @@ fn query_bed_files_tvt(filename_a: &str, filename_b: &str) -> Result<(), Generic
     let a_trees = read_bed_file(filename_a)?;
     let b_trees = read_bed_file_numbered(filename_b)?;
 
-    let mut a_querents = FnvHashMap::<String, SortedQuerent<()>>::default();
+    let mut a_querents = FnvHashMap::<String, SortedQuerent<(), u32>>::default();
     for (seqname, a_tree) in &a_trees {
         a_querents.insert(seqname.clone(), SortedQuerent::new(a_tree));
     }
@@ -281,7 +281,7 @@ fn query_bed_files_with_sorted_querent(filename_a: &str, filename_b: &str) -> Re
     let mut total_count: usize = 0;
     let now = Instant::now();
 
-    let mut querents = FnvHashMap::<String, SortedQuerent<()>>::default();
+    let mut querents = FnvHashMap::<String, SortedQuerent<(), u32>>::default();
     for (seqname, tree) in &trees {
         querents.insert(seqname.clone(), SortedQuerent::new(tree));
     }
