@@ -13,7 +13,7 @@ fn random_interval(min_first: i32, max_last: i32, min_len: i32, max_len: i32) ->
 }
 
 fn check_iteration(n: usize) {
-    let mut b: Vec<IntervalNode<usize>> = Vec::with_capacity(n);
+    let mut b: Vec<IntervalNode<usize, usize>> = Vec::with_capacity(n);
     let min_first = 0;
     let max_last = 10000000;
     let min_len = 1;

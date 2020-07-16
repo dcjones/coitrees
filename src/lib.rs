@@ -93,10 +93,14 @@ impl<T, I> IntervalNode<T, I> where T: Copy, I: IntWithMax {
 
 #[test]
 fn test_interval_len() {
-    assert_eq!(IntervalNode::new(1, -1, ()).len(), 0);
-    assert_eq!(IntervalNode::new(1, 0, ()).len(), 0);
-    assert_eq!(IntervalNode::new(1, 1, ()).len(), 1);
-    assert_eq!(IntervalNode::new(1, 2, ()).len(), 2);
+    fn make_interval(first: i32, last: i32) -> IntervalNode<(), u32> {
+        return IntervalNode::new(first, last, ());
+    }
+
+    assert_eq!(make_interval(1, -1).len(), 0);
+    assert_eq!(make_interval(1, 0).len(), 0);
+    assert_eq!(make_interval(1, 1).len(), 1);
+    assert_eq!(make_interval(1, 2).len(), 2);
 }
 
 
@@ -109,7 +113,10 @@ pub struct COITree<T, I>  where T: Copy, I: IntWithMax {
 
 impl<T, I> COITree<T, I> where T: Copy, I: IntWithMax {
     pub fn new(nodes: Vec<IntervalNode<T, I>>) -> COITree<T, I> {
-        // TODO: check that nodes.len() isnt't too long for I
+        if nodes.len() >= (I::MAX).to_usize() {
+            panic!("COITree construction failed: more intervals that index type and enumerate")
+        }
+
         let (nodes, root_idx, height) = veb_order(nodes);
         return COITree { nodes: nodes, root_idx: root_idx, height: height };
     }
