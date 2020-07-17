@@ -571,7 +571,6 @@ fn traverse_recursion<T, I>(
     let right;
     let subtree_size = end - start;
 
-    nodes[root_idx].subtree_last = nodes[root_idx].last;
     info[root_idx].depth = depth;
     info[root_idx].preorder = I::from_usize(*preorder);
     info[root_idx].parent = parent;
@@ -581,8 +580,9 @@ fn traverse_recursion<T, I>(
         left = traverse_recursion(
                 nodes, info, start, root_idx, depth+1,
                 I::from_usize(root_idx), inorder, preorder);
-        nodes[root_idx].subtree_last = nodes[root_idx].subtree_last.max(
-            nodes[left.to_usize()].subtree_last);
+        if nodes[left.to_usize()].subtree_last > nodes[root_idx].subtree_last {
+            nodes[root_idx].subtree_last = nodes[left.to_usize()].subtree_last;
+        }
     } else {
         left = I::MAX;
     }
@@ -594,8 +594,9 @@ fn traverse_recursion<T, I>(
         right = traverse_recursion(
             nodes, info, root_idx+1, end, depth+1,
             I::from_usize(root_idx), inorder, preorder);
-        nodes[root_idx].subtree_last = nodes[root_idx].subtree_last.max(
-            nodes[right.to_usize()].subtree_last);
+        if nodes[right.to_usize()].subtree_last > nodes[root_idx].subtree_last {
+            nodes[root_idx].subtree_last = nodes[right.to_usize()].subtree_last;
+        }
     } else {
         right = I::MAX;
     }
