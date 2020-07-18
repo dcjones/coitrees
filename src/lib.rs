@@ -114,7 +114,7 @@ pub struct COITree<T, I>  where T: Copy, I: IntWithMax {
 impl<T, I> COITree<T, I> where T: Copy, I: IntWithMax {
     pub fn new(nodes: Vec<IntervalNode<T, I>>) -> COITree<T, I> {
         if nodes.len() >= (I::MAX).to_usize() {
-            panic!("COITree construction failed: more intervals that index type and enumerate")
+            panic!("COITree construction failed: more intervals than index type can enumerate")
         }
 
         let (nodes, root_idx, height) = veb_order(nodes);
@@ -222,7 +222,7 @@ impl<'a, T, I> Iterator for COITreeIterator<'a, T, I> where T: Copy, I: IntWithM
                 if let Some(i) = self.stack.pop() {
                     self.i = i;
                 } else {
-                    self.i = usize::max_value();
+                    self.i = usize::MAX;
                 }
             }
         } else {
@@ -230,7 +230,7 @@ impl<'a, T, I> Iterator for COITreeIterator<'a, T, I> where T: Copy, I: IntWithM
                 if let Some(i) = self.stack.pop() {
                     self.i = i;
                 } else {
-                    self.i = usize::max_value();
+                    self.i = usize::MAX;
                 }
             } else {
                 let mut i = node.right.to_usize();
@@ -628,21 +628,21 @@ fn stable_ternary_tree_partition<I>(
     let mut bottom_left_size = 0;
     let mut top_size = 0;
     let mut bottom_right_size = 0;
-    for (i, j) in input[start..end].iter().enumerate() {
-        let info_j = info[j.to_usize()];
-        let p: i8;
+
+    for (i, p) in input[start..end].iter().zip(&mut partition[start..end]) {
+        let info_j = info[i.to_usize()];
         if info_j.depth <= pivot_depth {
-            p = 0;
+            *p = 0;
             top_size += 1;
         } else if info_j.inorder < pivot_dfs {
-            p = -1;
+            *p = -1;
             bottom_left_size += 1;
         } else {
-            p = 1;
+            *p = 1;
             bottom_right_size += 1;
         }
-        partition[start+i] = p;
     }
+
     assert!(bottom_left_size + top_size + bottom_right_size == n);
 
     // do the partition
@@ -863,15 +863,19 @@ fn veb_order_recursion<T, I>(
         let mut i = *part_start;
         while i < *part_end {
             assert!(info[idxs[i].to_usize()].depth == bottom_subtree_depth);
-            let mut j = i+1;
+
             let mut subtree_max_depth = info[idxs[i].to_usize()].depth;
-            while j < *part_end && info[idxs[j].to_usize()].depth != bottom_subtree_depth {
-                assert!(info[idxs[j].to_usize()].depth > bottom_subtree_depth);
-                if info[idxs[j].to_usize()].depth > subtree_max_depth {
-                    subtree_max_depth = info[idxs[j].to_usize()].depth;
+            let mut j = *part_end;
+            for (u, v) in (i+1..*part_end).zip(&idxs[i+1..*part_end]) {
+                let depth = info[v.to_usize()].depth;
+                if depth == bottom_subtree_depth {
+                    j = u;
+                    break;
+                } else if depth > subtree_max_depth {
+                    subtree_max_depth = depth;
                 }
-                j += 1;
             }
+
             veb_order_recursion(
                 idxs, tmp, partition, info, nodes, i, j, childless, !parity,
                 bottom_subtree_depth, subtree_max_depth);
