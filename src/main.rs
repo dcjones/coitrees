@@ -18,9 +18,26 @@ extern crate libc;
 type GenericError = Box<dyn Error>;
 
 
-fn parse_bed_line(line: &[u8]) -> (&str, &str, &str, i32, i32) {
+// Parse a i32 with no checking whatsoever. (e.g. non-number characters will just)
+fn i32_from_bytes_uncheckd(s: &[u8]) -> i32 {
+    if s.is_empty() {
+        return 0;
+    } else if s[0] == b'-' {
+        return -s[1..].iter().fold(0, |a, b| a*10 + (b & 0x0f) as i32);
+    } else {
+        return s.iter().fold(0, |a, b| a*10 + (b & 0x0f) as i32);
+    }
+}
+
+
+fn parse_bed_line(line: &[u8]) -> (&str, i32, i32) {
+    let n = line.len() - 1;
+    // let mut p = line[..n].iter().position(|c| *c == b'\t').unwrap();
     let mut p = 0;
-    while p < line.len()-1 && line[p] != b'\t' {
+    for c in &line[p..n] {
+        if *c == b'\t' {
+            break;
+        }
         p += 1;
     }
     let seqname = unsafe {
@@ -29,25 +46,25 @@ fn parse_bed_line(line: &[u8]) -> (&str, &str, &str, i32, i32) {
     p += 1;
     let p0 = p;
 
-    while p < line.len()-1 && line[p] != b'\t' {
+    for c in &line[p..n] {
+        if *c == b'\t' {
+            break;
+        }
         p += 1;
     }
-    let first_str = unsafe {
-        str::from_utf8_unchecked(&line[p0..p])
-    };
-    let first = first_str.parse::<i32>().unwrap();
+    let first = i32_from_bytes_uncheckd(&line[p0..p]);
     p += 1;
     let p0 = p;
 
-    while p < line.len()-1 && line[p] != b'\t' {
+    for c in &line[p..n] {
+        if *c == b'\t' {
+            break;
+        }
         p += 1;
     }
-    let last_str = unsafe {
-        str::from_utf8_unchecked(&line[p0..p])
-    };
-    let last = last_str.parse::<i32>().unwrap() - 1;
+    let last = i32_from_bytes_uncheckd(&line[p0..p]) - 1;
 
-    return (seqname, first_str, last_str, first, last);
+    return (seqname, first, last);
 }
 
 
@@ -62,7 +79,7 @@ fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<(), u32>>, Gen
     let mut line_count = 0;
     let mut line = Vec::new();
     while rdr.read_until(b'\n', &mut line).unwrap() > 0 {
-        let (seqname, _, _, first, last) =
+        let (seqname, first, last) =
             parse_bed_line(&line);
 
         let node_arr = if let Some(node_arr) = nodes.get_mut(seqname) {
@@ -102,7 +119,7 @@ fn read_bed_file_numbered(path: &str) -> Result<FnvHashMap<String, COITree<usize
     let mut line_count = 0;
     let mut line = Vec::new();
     while rdr.read_until(b'\n', &mut line).unwrap() > 0 {
-        let (seqname, _, _, first, last) =
+        let (seqname, first, last) =
             parse_bed_line(&line);
 
         let node_arr = if let Some(node_arr) = nodes.get_mut(seqname) {
@@ -147,7 +164,7 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
     // let mut out = stdout.lock();
 
     while rdr.read_until(b'\n', &mut line).unwrap() > 0 {
-        let (seqname, _first_str, _last_str, first, last) =
+        let (seqname, first, last) =
             parse_bed_line(&line);
 
         let mut count: usize = 0;
@@ -233,7 +250,7 @@ fn query_bed_files_coverage(filename_a: &str, filename_b: &str) -> Result<(), Ge
     // let mut out = stdout.lock();
 
     while rdr.read_until(b'\n', &mut line).unwrap() > 0 {
-        let (seqname, _first_str, _last_str, first, last) =
+        let (seqname, first, last) =
             parse_bed_line(&line);
 
         let mut cov: usize = 0;
@@ -287,7 +304,7 @@ fn query_bed_files_with_sorted_querent(filename_a: &str, filename_b: &str) -> Re
     }
 
     while rdr.read_until(b'\n', &mut line).unwrap() > 0 {
-        let (seqname, _first_str, _last_str, first, last) =
+        let (seqname, first, last) =
             parse_bed_line(&line);
 
         let mut count: usize = 0;
