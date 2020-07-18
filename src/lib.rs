@@ -523,7 +523,7 @@ fn overlaps(first_a: i32, last_a: i32, first_b: i32, last_b: i32) -> bool {
 
 
 // Used by `traverse` to keep record tree metadata.
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug)]
 struct TraversalInfo<I> where I: IntWithMax {
     depth: u32,
     inorder: I, // in-order visit number
@@ -533,6 +533,22 @@ struct TraversalInfo<I> where I: IntWithMax {
     right: I,
     parent: I,
     simple: bool // set by veb_order_recursion
+}
+
+
+impl<I> Default for TraversalInfo<I> where I: IntWithMax {
+    fn default() -> Self {
+        return TraversalInfo{
+            depth: 0,
+            inorder: I::default(),
+            preorder: I::default(),
+            subtree_size: I::one(),
+            left: I::MAX,
+            right: I::MAX,
+            parent: I::MAX,
+            simple: false
+        }
+    }
 }
 
 
@@ -567,8 +583,6 @@ fn traverse_recursion<T, I>(
     }
 
     let root_idx = start + (end - start) / 2;
-    let left;
-    let right;
     let subtree_size = end - start;
 
     info[root_idx].depth = depth;
@@ -577,33 +591,29 @@ fn traverse_recursion<T, I>(
     *preorder += 1;
 
     if root_idx > start {
-        left = traverse_recursion(
+        let left = traverse_recursion(
                 nodes, info, start, root_idx, depth+1,
                 I::from_usize(root_idx), inorder, preorder);
         if nodes[left.to_usize()].subtree_last > nodes[root_idx].subtree_last {
             nodes[root_idx].subtree_last = nodes[left.to_usize()].subtree_last;
         }
-    } else {
-        left = I::MAX;
+        info[root_idx].left = left;
     }
 
     info[root_idx].inorder = I::from_usize(*inorder);
     *inorder += 1;
 
     if root_idx + 1 < end {
-        right = traverse_recursion(
+        let right = traverse_recursion(
             nodes, info, root_idx+1, end, depth+1,
             I::from_usize(root_idx), inorder, preorder);
         if nodes[right.to_usize()].subtree_last > nodes[root_idx].subtree_last {
             nodes[root_idx].subtree_last = nodes[right.to_usize()].subtree_last;
         }
-    } else {
-        right = I::MAX;
+        info[root_idx].right = right;
     }
 
     info[root_idx].subtree_size = I::from_usize(subtree_size);
-    info[root_idx].left = left;
-    info[root_idx].right = right;
 
     return I::from_usize(root_idx);
 }
