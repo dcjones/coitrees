@@ -614,37 +614,49 @@ fn traverse_recursion<T, I>(
 // where bottom left and right are the bottom subtrees with positioned to
 // the left and right of the root node
 fn stable_ternary_tree_partition<I>(
-        input: &[I], output: &mut [I],
+        input: &[I], output: &mut [I], partition: &mut [i8],
         info: &[TraversalInfo<I>], pivot_depth: u32, pivot_dfs: I,
         start: usize, end: usize) -> (usize, usize) where I: IntWithMax {
 
-    // bottom left
+    let n = end - start;
+
+    // determine which partition each index goes in
+    let mut bottom_left_size = 0;
+    let mut top_size = 0;
+    let mut bottom_right_size = 0;
+    for (i, j) in input[start..end].iter().enumerate() {
+        let info_j = info[j.to_usize()];
+        let p: i8;
+        if info_j.depth <= pivot_depth {
+            p = 0;
+            top_size += 1;
+        } else if info_j.inorder < pivot_dfs {
+            p = -1;
+            bottom_left_size += 1;
+        } else {
+            p = 1;
+            bottom_right_size += 1;
+        }
+        partition[start+i] = p;
+    }
+    assert!(bottom_left_size + top_size + bottom_right_size == n);
+
+    // do the partition
     let mut bl = start;
-    for i in &input[start..end] {
-        if info[i.to_usize()].depth > pivot_depth && info[i.to_usize()].inorder < pivot_dfs {
+    let mut t = bl + bottom_left_size;
+    let mut br = t + top_size;
+    for (i, p) in input[start..end].iter().zip(&partition[start..end]) {
+        if *p < 0 {
             output[bl] = *i;
             bl += 1;
-        }
-    }
-
-    // top
-    let mut t = bl;
-    for i in &input[start..end] {
-        if info[i.to_usize()].depth <= pivot_depth {
+        } else if *p == 0 {
             output[t] = *i;
             t += 1;
-        }
-    }
-
-    // bottom right
-    let mut br = t;
-    for i in &input[start..end] {
-        if info[i.to_usize()].depth > pivot_depth && info[i.to_usize()].inorder > pivot_dfs {
+        } else {
             output[br] = *i;
             br += 1;
         }
     }
-
     assert!(br == end);
 
     return (bl, t);
@@ -699,9 +711,12 @@ fn veb_order<T, I>(mut nodes: Vec<IntervalNode<T, I>>) -> (Vec<IntervalNode<T, I
     }
     let (idxs, tmp) = (tmp, idxs);
 
+    // space used to by stable_ternary_tree_partition
+    let partition: &mut [i8] = &mut vec![0; n];
+
     // let now = Instant::now();
     let root_idx = veb_order_recursion(
-        idxs, tmp, &mut info, &mut nodes, 0, n, true, false, 0, max_depth);
+        idxs, tmp, partition, &mut info, &mut nodes, 0, n, true, false, 0, max_depth);
     // eprintln!("computing order: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
     // let now = Instant::now();
@@ -780,7 +795,7 @@ fn compute_tree_size<T, I>(nodes: &[IntervalNode<T, I>], root_idx: usize) -> usi
 //   min_depth, max_depth: depth extreme of the start..end slice
 //
 fn veb_order_recursion<T, I>(
-        idxs: &mut [I], tmp: &mut [I],
+        idxs: &mut [I], tmp: &mut [I], partition: &mut [i8],
         info: &mut [TraversalInfo<I>],
         nodes: &mut [IntervalNode<T, I>],
         start: usize, end: usize,
@@ -841,14 +856,14 @@ fn veb_order_recursion<T, I>(
 
     let (top_start, bottom_right_start) =
         stable_ternary_tree_partition(
-            idxs, tmp, info, pivot_depth, pivot_dfs, start, end);
+            idxs, tmp, partition, info, pivot_depth, pivot_dfs, start, end);
 
     // tmp is not partitioned, so swap pointers
     let (tmp, idxs) = (idxs, tmp);
 
     // recurse on top subtree
     let top_root_idx = veb_order_recursion(
-        idxs, tmp, info, nodes, top_start, bottom_right_start, false,
+        idxs, tmp, partition, info, nodes, top_start, bottom_right_start, false,
         !parity, min_depth, pivot_depth);
 
     // find on recurse on subtrees in the bottom left partition and bottom right partition
@@ -867,7 +882,7 @@ fn veb_order_recursion<T, I>(
                 j += 1;
             }
             veb_order_recursion(
-                idxs, tmp, info, nodes, i, j, childless, !parity,
+                idxs, tmp, partition, info, nodes, i, j, childless, !parity,
                 bottom_subtree_depth, subtree_max_depth);
             i = j;
         }
