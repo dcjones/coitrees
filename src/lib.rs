@@ -530,7 +530,6 @@ struct TraversalInfo<I> where I: IntWithMax {
     preorder: I, // pre-order visit number
     subtree_size: I,
     parent: I,
-    simple: bool // set by veb_order_recursion
 }
 
 
@@ -542,7 +541,6 @@ impl<I> Default for TraversalInfo<I> where I: IntWithMax {
             preorder: I::default(),
             subtree_size: I::one(),
             parent: I::MAX,
-            simple: false
         }
     }
 }
@@ -735,11 +733,7 @@ fn veb_order<T, I>(mut nodes: Vec<IntervalNode<T, I>>) -> (Vec<IntervalNode<T, I
     // put nodes in vEB order in a temporary vector
     for i in 0..n {
         veb_nodes[i] = nodes[idxs[i.to_usize()].to_usize()];
-
-        if info[idxs[i].to_usize()].simple {
-            veb_nodes[i].left = info[idxs[i].to_usize()].subtree_size;
-            veb_nodes[i].right = veb_nodes[i].left;
-        } else {
+        if veb_nodes[i].left != veb_nodes[i].right {
             if veb_nodes[i].left < I::MAX {
                 veb_nodes[i].left = revidx[veb_nodes[i].left.to_usize()];
             }
@@ -795,7 +789,7 @@ fn compute_tree_size<T, I>(nodes: &[IntervalNode<T, I>], root_idx: usize) -> usi
 //
 fn veb_order_recursion<T, I>(
         idxs: &mut [I], tmp: &mut [I], partition: &mut [i8],
-        info: &mut [TraversalInfo<I>],
+        info: &[TraversalInfo<I>],
         nodes: &mut [IntervalNode<T, I>],
         start: usize, end: usize,
         childless: bool,
@@ -812,17 +806,15 @@ fn veb_order_recursion<T, I>(
         let old_root = idxs[start];
 
         idxs[start..end].sort_unstable_by_key(|i| info[i.to_usize()].inorder);
-        info[idxs[start].to_usize()].simple = true;
         let subtree_size = info[old_root.to_usize()].subtree_size;
-        info[idxs[start].to_usize()].subtree_size = subtree_size;
         nodes[idxs[start].to_usize()].subtree_last = nodes[old_root.to_usize()].subtree_last;
 
         // all children nodes record the size of the remaining list
         // let mut subtree_i_size = subtree_size - i;
         let mut subtree_i_size = subtree_size;
-        for i in 0..info[idxs[start].to_usize()].subtree_size.to_usize() {
-            info[idxs[start+i].to_usize()].subtree_size = subtree_i_size;
-            info[idxs[start+i].to_usize()].simple = true;
+        for i in 0..subtree_size.to_usize() {
+            nodes[idxs[start+i].to_usize()].left = subtree_i_size;
+            nodes[idxs[start+i].to_usize()].right = subtree_i_size;
             subtree_i_size -= I::one();
         }
 
