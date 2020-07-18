@@ -529,8 +529,6 @@ struct TraversalInfo<I> where I: IntWithMax {
     inorder: I, // in-order visit number
     preorder: I, // pre-order visit number
     subtree_size: I,
-    left: I,
-    right: I,
     parent: I,
     simple: bool // set by veb_order_recursion
 }
@@ -543,8 +541,6 @@ impl<I> Default for TraversalInfo<I> where I: IntWithMax {
             inorder: I::default(),
             preorder: I::default(),
             subtree_size: I::one(),
-            left: I::MAX,
-            right: I::MAX,
             parent: I::MAX,
             simple: false
         }
@@ -597,7 +593,7 @@ fn traverse_recursion<T, I>(
         if nodes[left.to_usize()].subtree_last > nodes[root_idx].subtree_last {
             nodes[root_idx].subtree_last = nodes[left.to_usize()].subtree_last;
         }
-        info[root_idx].left = left;
+        nodes[root_idx].left = left;
     }
 
     info[root_idx].inorder = I::from_usize(*inorder);
@@ -610,7 +606,7 @@ fn traverse_recursion<T, I>(
         if nodes[right.to_usize()].subtree_last > nodes[root_idx].subtree_last {
             nodes[root_idx].subtree_last = nodes[right.to_usize()].subtree_last;
         }
-        info[root_idx].right = right;
+        nodes[root_idx].right = right;
     }
 
     info[root_idx].subtree_size = I::from_usize(subtree_size);
@@ -744,20 +740,13 @@ fn veb_order<T, I>(mut nodes: Vec<IntervalNode<T, I>>) -> (Vec<IntervalNode<T, I
             veb_nodes[i].left = info[idxs[i].to_usize()].subtree_size;
             veb_nodes[i].right = veb_nodes[i].left;
         } else {
-            // update left and right pointers
-            let left = info[idxs[i].to_usize()].left;
-            veb_nodes[i].left = if left < I::MAX {
-                revidx[left.to_usize()]
-            } else {
-                left
-            };
+            if veb_nodes[i].left < I::MAX {
+                veb_nodes[i].left = revidx[veb_nodes[i].left.to_usize()];
+            }
 
-            let right = info[idxs[i].to_usize()].right;
-            veb_nodes[i].right = if right < I::MAX {
-                revidx[right.to_usize()]
-            } else {
-                right
-            };
+            if veb_nodes[i].right < I::MAX {
+                veb_nodes[i].right = revidx[veb_nodes[i].right.to_usize()];
+            }
         }
     }
 
@@ -839,11 +828,11 @@ fn veb_order_recursion<T, I>(
 
         let parent = info[old_root.to_usize()].parent;
         if parent < I::MAX {
-            if info[parent.to_usize()].left == old_root {
-                info[parent.to_usize()].left = idxs[start];
+            if nodes[parent.to_usize()].left == old_root {
+                nodes[parent.to_usize()].left = idxs[start];
             } else {
-                assert!(info[parent.to_usize()].right == old_root);
-                info[parent.to_usize()].right = idxs[start];
+                assert!(nodes[parent.to_usize()].right == old_root);
+                nodes[parent.to_usize()].right = idxs[start];
             }
         }
 
