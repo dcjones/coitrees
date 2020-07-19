@@ -1,0 +1,4 @@
+#!/bin/sh
+
+../target/release/examples/bed-intersect --tree-vs-tree $1 $2
+

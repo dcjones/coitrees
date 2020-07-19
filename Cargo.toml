@@ -7,10 +7,11 @@ edition = "2018"
 #[profile.release]
 #debug = true
 
-[dependencies]
+[dev-dependencies]
+rand = "0.7"
 fnv = "1.0.3"
 libc = "0.2"
 clap = "3.0.0-beta.1"
 
-[dev-dependencies]
-rand = "0.7"
+[[example]]
+name = "bed-intersect"

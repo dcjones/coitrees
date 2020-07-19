@@ -1,4 +1,4 @@
 #!/bin/sh
 
-../target/release/coitrees --coverage $1 $2
+../target/release/examples/bed-intersect --coverage $1 $2
 

@@ -1,4 +1,4 @@
 #!/bin/sh
 
-../target/release/coitrees $1 $2
+../target/release/examples/bed-intersect $1 $2
 
