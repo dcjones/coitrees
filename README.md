@@ -8,19 +8,12 @@ Borrowing from [cgranges](https://github.com/lh3/cgranges), this data
 structure stores intervals in contiguous memory, but improves query
 performance by storing the nodes in in-order [van Emde Boas
 layout](http://erikdemaine.org/papers/FOCS2000b/paper.pdf) layout. Computing
-the layout requires to some extra time and memory, but improves average cache
-locality for queries of the tree. In the interval set is relatively large,
+the layout requires some extra time and memory, but improves average cache
+locality for queries of the tree. If the interval set is relatively large,
 and a sufficiently large number of queries are performed, it tends to out-perform
 other data structures.
 
-It does this by storing the tree in in-order [van Emde Boas
-layout](http://erikdemaine.org/papers/FOCS2000b/paper.pdf). That adds some
-overhead in computing the layout and storing child pointers, but makes
-searching through large trees significantly faster. Additionally, overhead is
-reduced by storing small bottom subtrees in sorted order and searching through
-them linearly.
-
-The `SortedQuerent` type implements a alternative query strategy that keeps track
+The `SortedQuerent` type implements an alternative query strategy that keeps track
 of the results of the previous query. When a query overlaps the previous one,
 the results from that previous query can be reused to dramatically accelerate
 the current one. (In the benchmarks, this is the `--sorted` option.)
@@ -92,10 +85,10 @@ BED files. Most of the programs (including the one implemented in coitrees)
 have incomplete BED parsers, and some use other shortcuts like assuming a
 fixed set of chromosomes with specific naming schemes.
 
-`bedtools` carries the disadvatage of being an actually useful tool, rather
-than implemented entirely for winning benchmark games. It seems clear it
-could be a lot faster, but there no doubt some cost that can be chalked up to
-featurfulness, completeness, and saftey.
+`bedtools` carries the disadvantage of being an actually useful tool, rather
+than implemented being implemented entirely for the purpose of winning benchmark
+games. It seems clear it could be a lot faster, but there no doubt some cost can
+be chalked up to featurefulness, completeness, and safety.
 
 If you have a BED intersection program you suspect may be faster (or just
 interesting), please let me know and I'll try to benchmark it.
