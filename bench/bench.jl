@@ -2,9 +2,9 @@
 
 function main()
     random_test_filenames = Dict(
-        "A"  => joinpath(pwd(), "../test/test1.random.ucsc.nochrm.bed"),
-        "B"  => joinpath(pwd(), "../test/test2.random.ucsc.nochrm.bed"),
-        "B_" => joinpath(pwd(), "../test/test3.random.ucsc.bed"))
+        "A"  => joinpath(pwd(), "test1.random.ucsc.nochrm.bed"),
+        "B"  => joinpath(pwd(), "test2.random.ucsc.nochrm.bed"),
+        "B_" => joinpath(pwd(), "test3.random.ucsc.bed"))
 
     random_methods = Dict(
         "coitrees"      => "./coitrees",
@@ -18,9 +18,9 @@ function main()
     )
 
     sorted_test_filenames = Dict(
-        "A"  => joinpath(pwd(), "../test/test1.ucsc.nochrm.bed"),
-        "B"  => joinpath(pwd(), "../test/test2.ucsc.nochrm.bed"),
-        "B_" => joinpath(pwd(), "../test/test3.ucsc.bed"))
+        "A"  => joinpath(pwd(), "test1.ucsc.nochrm.bed"),
+        "B"  => joinpath(pwd(), "test2.ucsc.nochrm.bed"),
+        "B_" => joinpath(pwd(), "test3.ucsc.bed"))
 
     sorted_methods = copy(random_methods)
     sorted_methods["coitrees (`--sorted`)"] = "./coitrees-sorted"

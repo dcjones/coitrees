@@ -1,0 +1,9 @@
+tags
+target/
+**/*.rs.bk
+Cargo.lock
+bench/sorted-bench.csv
+bench/sorted-cov-bench.csv
+bench/random-bench.csv
+bench/random-cov-bench.csv
+bench/*.bed

@@ -5,6 +5,11 @@ version = "0.2.0"
 authors = ["Daniel C. Jones <dcjones@cs.washington.edu>"]
 edition = "2018"
 license = "MIT"
+repository = "https://github.com/dcjones/coitrees"
+documentation = "https://docs.rs/coitrees"
+readme = "README.md"
+license-file = "LICENSE.md"
+
 
 [profile.release]
 lto = true
