@@ -8,6 +8,7 @@ function main()
 
     random_methods = Dict(
         "coitrees"      => "./coitrees",
+        "coitrees --tree-vs-tree" => "./coitrees-tvt",
         "cgranges `-c`" => "./cgranges",
         "CITree"        => "./CITree",
         "AIList"        => "./AIList",

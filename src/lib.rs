@@ -145,7 +145,7 @@ fn test_interval_len() {
 ///
 /// The index type `I` is a typically `usize`, but can be `u32` or `u16`.
 /// It's slightly more efficient to use a smalled index type, assuming there are
-/// fewer than I::MAX-1 nodes to store.
+/// fewer than I::MAX-1 intervals to store.
 pub struct COITree<T, I>  where T: Clone, I: IntWithMax {
     nodes: Vec<IntervalNode<T, I>>,
     root_idx: usize,

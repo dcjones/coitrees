@@ -1,10 +1,13 @@
 [package]
 name = "coitrees"
-version = "0.1.0"
+description = "A very fast data structure for overlap queries on sets of intervals."
+version = "0.2.0"
 authors = ["Daniel C. Jones <dcjones@cs.washington.edu>"]
 edition = "2018"
+license = "MIT"
 
-#[profile.release]
+[profile.release]
+lto = true
 #debug = true
 
 [dev-dependencies]
