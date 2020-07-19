@@ -8,6 +8,11 @@
 //! query performance. The downside is that building the tree is more expensive
 //! so a relatively large number of queries needs to made for it to break even.
 //!
+//! The data structure `COITree` is constructed with an array of `IntervalNode`
+//! structs which store integer, end-inclusive intervals along with associated
+//! metadata. The tree can be queried directly for coverage or overlaps, or
+//! through the intermediary `SortedQuerenty` which keeps track of some state
+//! to accelerate overlaping queries.
 
 use std::marker::Copy;
 use std::convert::{TryInto, TryFrom};
@@ -69,6 +74,21 @@ impl IntWithMax for u16 {
 /// memory, it may be better to store large metadata outside the node and
 /// use a pointer or reference for the metadata.
 ///
+/// # Examples
+/// ```
+/// use coitrees::IntervalNode;
+///
+/// #[derive(Clone)]
+/// struct MyMetadata {
+///     chrom: String,
+///     posstrand: bool
+/// }
+///
+/// let some_interval = IntervalNode::<_, usize>::new(
+///     10, 24000, MyMetadata{chrom: String::from("chr1"), posstrand: false});
+///
+/// assert_eq!(some_interval.len(), 23991);
+/// ```
 #[derive(Clone)]
 pub struct IntervalNode<T, I> where T: Clone, I: IntWithMax
  {
@@ -100,6 +120,7 @@ impl<T, I> IntervalNode<T, I> where T: Clone, I: IntWithMax {
         };
     }
 
+    /// Length spanned by the interval. (Interval are end-inclusive.)
     pub fn len(&self) -> i32 {
         return (self.last - self.first + 1).max(0);
     }
@@ -119,6 +140,12 @@ fn test_interval_len() {
 }
 
 
+/// COITree data structure. A representation of a static set of intervals with
+/// associated metadata, enabling fast overlap and coverage queries.
+///
+/// The index type `I` is a typically `usize`, but can be `u32` or `u16`.
+/// It's slightly more efficient to use a smalled index type, assuming there are
+/// fewer than I::MAX-1 nodes to store.
 pub struct COITree<T, I>  where T: Clone, I: IntWithMax {
     nodes: Vec<IntervalNode<T, I>>,
     root_idx: usize,
@@ -136,23 +163,24 @@ impl<T, I> COITree<T, I> where T: Clone, I: IntWithMax {
         return COITree { nodes: nodes, root_idx: root_idx, height: height };
     }
 
+    /// Number of intervals in the set.
     pub fn len(&self) -> usize {
         return self.nodes.len();
     }
 
+    /// True iff the set is empty.
     pub fn is_empty(&self) -> bool {
         return self.nodes.is_empty();
     }
 
-    // find overlaps and call `visit` on every overlapping node
+    /// Find intervals in the set overlaping the query `[first, last]` and call `visit` on every overlapping node
     pub fn query<'a, F>(&'a self, first: i32, last: i32, mut visit: F) where F: FnMut(&'a IntervalNode<T, I>) {
         if !self.is_empty() {
             query_recursion(&self.nodes, self.root_idx, first, last, &mut visit);
         }
     }
 
-    // Count the number of overlaps. This can be done with `query`, but this
-    // is slightly faster in cases of a large number of overlaps.
+    /// Count the number of intervals in the set overlapping the query `[first, last]`.
     pub fn query_count(&self, first: i32, last: i32) -> usize  {
         if !self.is_empty() {
             return query_recursion_count(&self.nodes, self.root_idx, first, last);
@@ -161,7 +189,9 @@ impl<T, I> COITree<T, I> where T: Clone, I: IntWithMax {
         }
     }
 
-    // Return the proportion of the query covered by intervals in the tree.
+    /// Return a pair `(count, cov)`, where `count` gives the number of intervals
+    /// in the set overlapping the query, and `cov` the number of positions in the query
+    /// interval covered by at least one interval in the set.
     pub fn coverage(&self, first: i32, last: i32) -> (usize, usize) {
         assert!(last >= first);
 
@@ -181,6 +211,7 @@ impl<T, I> COITree<T, I> where T: Clone, I: IntWithMax {
         return (count, cov);
     }
 
+    /// Iterate through the interval set in sorted order by interval start position.
     pub fn iter(&self) -> COITreeIterator<T, I> {
         let mut i = self.root_idx;
         let mut stack: Vec<usize> = Vec::with_capacity(self.height);
@@ -211,7 +242,7 @@ impl<'a, T, I> IntoIterator for &'a COITree<T, I> where T: Clone, I: IntWithMax 
 }
 
 
-// Iterate through nodes in a tree in sorted order
+/// Iterate through nodes in a tree in sorted order by interval start position.
 pub struct COITreeIterator<'a, T, I> where T: Clone, I: IntWithMax {
     nodes: &'a Vec<IntervalNode<T, I>>,
     i: usize, // current node
@@ -417,9 +448,13 @@ fn coverage_recursion<T, I>(
 }
 
 
-// Used to perform dense sorted queries more efficiently by leveraging
-// what was learned from the previous query to speed up the current one, if
-// the current query is a nearby successor to the previous.
+/// An alternative query strategy that can be much faster when queries are performed
+/// in sorted order and overlap.
+///
+/// Unilke `COITree::query`, some state is retained between queries.
+/// `SortedQuerent` tracks that state. If queries are not sorted or don't
+/// overlap, this strategy still works, but is slightly slower than
+/// `COITree::query`.
 pub struct SortedQuerent<'a, T, I> where T: Clone, I: IntWithMax {
     tree: &'a COITree<T, I>,
     prev_first: i32,
@@ -429,6 +464,7 @@ pub struct SortedQuerent<'a, T, I> where T: Clone, I: IntWithMax {
 
 
 impl<'a, T, I> SortedQuerent<'a, T, I> where T: Clone, I: IntWithMax {
+    /// Construct a new `SortedQuerent` to perform a sequence. queries.
     pub fn new(tree: &'a COITree<T, I>) -> SortedQuerent<'a, T, I> {
         let overlapping_intervals: Vec<&IntervalNode<T, I>> = Vec::new();
         return SortedQuerent {
@@ -439,6 +475,10 @@ impl<'a, T, I> SortedQuerent<'a, T, I> where T: Clone, I: IntWithMax {
         };
     }
 
+    /// Find intervals in the underlying `COITree` that overlap the query
+    /// `[first, last]` and call `visit` on each. Works equivalently to
+    /// `COITrees::query` but queries that overlap prior queries will potentially
+    /// be faster.
     pub fn query<F>(&mut self, first: i32, last: i32, mut visit: F) where F: FnMut(&IntervalNode<T, I>) {
 
         if self.tree.is_empty() {
@@ -787,6 +827,7 @@ fn compute_tree_size<T, I>(nodes: &[IntervalNode<T, I>], root_idx: usize) -> usi
 // recursively reorder indexes to put it in vEB order. Called by `veb_order`
 //   idxs: current permutation
 //   tmp: temporary space of equal length to idxs
+//   partition: space used to assist `stable_ternary_tree_partition`.
 //   nodes: the interval nodes (in sorted order)
 //   start, end: slice within idxs to be reordered
 //   childless: true if this slice is a proper subtree and has no children below it

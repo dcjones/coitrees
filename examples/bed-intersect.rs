@@ -32,7 +32,6 @@ fn i32_from_bytes_uncheckd(s: &[u8]) -> i32 {
 
 fn parse_bed_line(line: &[u8]) -> (&str, i32, i32) {
     let n = line.len() - 1;
-    // let mut p = line[..n].iter().position(|c| *c == b'\t').unwrap();
     let mut p = 0;
     for c in &line[p..n] {
         if *c == b'\t' {
