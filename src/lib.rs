@@ -641,8 +641,8 @@ fn traverse_recursion<T, I>(
 
     if root_idx > start {
         let left = traverse_recursion(
-                nodes, info, start, root_idx, depth+1,
-                I::from_usize(root_idx), inorder, preorder);
+            nodes, info, start, root_idx, depth+1,
+            I::from_usize(root_idx), inorder, preorder);
         if nodes[left.to_usize()].subtree_last > nodes[root_idx].subtree_last {
             nodes[root_idx].subtree_last = nodes[left.to_usize()].subtree_last;
         }
@@ -765,7 +765,7 @@ fn veb_order<T, I>(mut nodes: Vec<IntervalNode<T, I>>) -> (Vec<IntervalNode<T, I
 
     // let now = Instant::now();
     let root_idx = veb_order_recursion(
-        idxs, tmp, partition, &mut info, &mut nodes, 0, n, true, false, 0, max_depth);
+        idxs, tmp, partition, &mut info, &mut nodes, 0, n, false, 0, max_depth);
     // eprintln!("computing order: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
     // let now = Instant::now();
@@ -839,10 +839,13 @@ fn veb_order_recursion<T, I>(
         info: &[TraversalInfo<I>],
         nodes: &mut [IntervalNode<T, I>],
         start: usize, end: usize,
-        childless: bool,
         parity: bool,
         min_depth: u32, max_depth: u32) -> I where T: Clone, I: IntWithMax {
     let n = (start..end).len();
+
+    assert!(n > 0);
+
+    let childless = info[idxs[start].to_usize()].subtree_size.to_usize() == n;
 
     // small subtrees are put into sorted order and just searched through
     // linearly. There is a little trickiness to this because we have to
@@ -882,9 +885,9 @@ fn veb_order_recursion<T, I>(
     }
 
     // very small trees are already in order
-    if n <= 3 {
+    if n == 1 {
         if parity {
-            tmp[start..end].copy_from_slice(&idxs[start..end]);
+            tmp[start] = idxs[start];
         }
         return idxs[start];
     }
@@ -901,7 +904,7 @@ fn veb_order_recursion<T, I>(
 
     // recurse on top subtree
     let top_root_idx = veb_order_recursion(
-        idxs, tmp, partition, info, nodes, top_start, bottom_right_start, false,
+        idxs, tmp, partition, info, nodes, top_start, bottom_right_start,
         !parity, min_depth, pivot_depth);
 
     // find on recurse on subtrees in the bottom left partition and bottom right partition
@@ -924,7 +927,7 @@ fn veb_order_recursion<T, I>(
             }
 
             veb_order_recursion(
-                idxs, tmp, partition, info, nodes, i, j, childless, !parity,
+                idxs, tmp, partition, info, nodes, i, j, !parity,
                 bottom_subtree_depth, subtree_max_depth);
             i = j;
         }
