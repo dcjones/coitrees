@@ -19,10 +19,15 @@ use std::convert::{TryInto, TryFrom};
 use std::fmt::Debug;
 use std::ops::{AddAssign, SubAssign};
 
-// small subtrees at the bottom of the tree are stored in sorted order
+// Small subtrees at the bottom of the tree are stored in sorted order
 // This gives the upper bound on the size of such subtrees. Performance isn't
 // super sensitive, but is worse with a very small or very large number.
 const SIMPLE_SUBTREE_CUTOFF: usize = 32;
+
+// Very dense subtrees in which we probably intersect most of the intervals
+// are more efficient to query linearly. When the expected proportion of hits
+// is a above this number it becomes a simple subtree.
+const SIMPLE_SUBTREE_DENSITY_CUTOFF: f64 = 0.75;
 
 
 /// A trait facilitating COITree index types.
@@ -585,6 +590,7 @@ struct TraversalInfo<I> where I: IntWithMax {
     preorder: I, // pre-order visit number
     subtree_size: I,
     parent: I,
+    expected_hit_proportion: f64,
 }
 
 
@@ -596,6 +602,7 @@ impl<I> Default for TraversalInfo<I> where I: IntWithMax {
             preorder: I::default(),
             subtree_size: I::one(),
             parent: I::MAX,
+            expected_hit_proportion: 0.0,
         }
     }
 }
@@ -624,11 +631,11 @@ fn traverse_recursion<T, I>(
         depth: u32,
         parent: I,
         inorder: &mut usize,
-        preorder: &mut usize) -> I
+        preorder: &mut usize) -> (I, i32, f64)
         where T: Clone, I: IntWithMax {
 
     if start >= end {
-        return I::MAX;
+        return (I::MAX, i32::MAX, f64::NAN);
     }
 
     let root_idx = start + (end - start) / 2;
@@ -639,10 +646,20 @@ fn traverse_recursion<T, I>(
     info[root_idx].parent = parent;
     *preorder += 1;
 
+    let mut subtree_first = nodes[root_idx].first;
+
+    let mut left_expected_hits = 0.0;
+    let mut left_subtree_span = 0;
+
     if root_idx > start {
-        let left = traverse_recursion(
+        let (left, left_subtree_first, left_expected_hits_) = traverse_recursion(
             nodes, info, start, root_idx, depth+1,
             I::from_usize(root_idx), inorder, preorder);
+
+        left_expected_hits = left_expected_hits_;
+        left_subtree_span = nodes[left.to_usize()].subtree_last - left_subtree_first + 1;
+
+        subtree_first = left_subtree_first;
         if nodes[left.to_usize()].subtree_last > nodes[root_idx].subtree_last {
             nodes[root_idx].subtree_last = nodes[left.to_usize()].subtree_last;
         }
@@ -652,10 +669,17 @@ fn traverse_recursion<T, I>(
     info[root_idx].inorder = I::from_usize(*inorder);
     *inorder += 1;
 
+    let mut right_expected_hits = 0.0;
+    let mut right_subtree_span = 0;
+
     if root_idx + 1 < end {
-        let right = traverse_recursion(
+        let (right, right_subtree_first, right_expected_hits_) = traverse_recursion(
             nodes, info, root_idx+1, end, depth+1,
             I::from_usize(root_idx), inorder, preorder);
+
+        right_expected_hits = right_expected_hits_;
+        right_subtree_span = nodes[right.to_usize()].subtree_last - right_subtree_first + 1;
+
         if nodes[right.to_usize()].subtree_last > nodes[root_idx].subtree_last {
             nodes[root_idx].subtree_last = nodes[right.to_usize()].subtree_last;
         }
@@ -663,8 +687,19 @@ fn traverse_recursion<T, I>(
     }
 
     info[root_idx].subtree_size = I::from_usize(subtree_size);
+    let subtree_span = nodes[root_idx].subtree_last - subtree_first + 1;
 
-    return I::from_usize(root_idx);
+    debug_assert!(left_subtree_span <= subtree_span);
+    debug_assert!(right_subtree_span <= subtree_span);
+
+    let expected_hits =
+        (nodes[root_idx].last - nodes[root_idx].first + 1) as f64 / subtree_span as f64 +
+        (left_subtree_span as f64 / subtree_span as f64) * left_expected_hits +
+        (right_subtree_span as f64 / subtree_span as f64) * right_expected_hits;
+
+    info[root_idx].expected_hit_proportion = expected_hits / subtree_size as f64;
+
+    return (I::from_usize(root_idx), subtree_first, expected_hits);
 }
 
 
@@ -850,7 +885,9 @@ fn veb_order_recursion<T, I>(
     // small subtrees are put into sorted order and just searched through
     // linearly. There is a little trickiness to this because we have to
     // update the parent's child pointers and some other fields.
-    if childless && info[idxs[start].to_usize()].subtree_size.to_usize() <= SIMPLE_SUBTREE_CUTOFF {
+    if childless &&
+            (info[idxs[start].to_usize()].subtree_size.to_usize() <= SIMPLE_SUBTREE_CUTOFF) ||
+            (info[idxs[start].to_usize()].expected_hit_proportion >= SIMPLE_SUBTREE_DENSITY_CUTOFF) {
         debug_assert!(n == info[idxs[start].to_usize()].subtree_size.to_usize());
 
         let old_root = idxs[start];
