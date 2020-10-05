@@ -22,12 +22,12 @@ use std::ops::{AddAssign, SubAssign};
 // Small subtrees at the bottom of the tree are stored in sorted order
 // This gives the upper bound on the size of such subtrees. Performance isn't
 // super sensitive, but is worse with a very small or very large number.
-const SIMPLE_SUBTREE_CUTOFF: usize = 32;
+const SIMPLE_SUBTREE_CUTOFF: usize = 64;
 
 // Very dense subtrees in which we probably intersect most of the intervals
 // are more efficient to query linearly. When the expected proportion of hits
 // is a above this number it becomes a simple subtree.
-const SIMPLE_SUBTREE_DENSITY_CUTOFF: f64 = 0.75;
+const SIMPLE_SUBTREE_DENSITY_CUTOFF: f64 = 0.2;
 
 
 /// A trait facilitating COITree index types.
@@ -886,8 +886,8 @@ fn veb_order_recursion<T, I>(
     // linearly. There is a little trickiness to this because we have to
     // update the parent's child pointers and some other fields.
     if childless &&
-            (info[idxs[start].to_usize()].subtree_size.to_usize() <= SIMPLE_SUBTREE_CUTOFF) ||
-            (info[idxs[start].to_usize()].expected_hit_proportion >= SIMPLE_SUBTREE_DENSITY_CUTOFF) {
+            ((info[idxs[start].to_usize()].subtree_size.to_usize() <= SIMPLE_SUBTREE_CUTOFF) ||
+             (info[idxs[start].to_usize()].expected_hit_proportion >= SIMPLE_SUBTREE_DENSITY_CUTOFF)) {
         debug_assert!(n == info[idxs[start].to_usize()].subtree_size.to_usize());
 
         let old_root = idxs[start];
