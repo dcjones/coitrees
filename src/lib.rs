@@ -27,7 +27,7 @@ const SIMPLE_SUBTREE_CUTOFF: usize = 64;
 // Very dense subtrees in which we probably intersect most of the intervals
 // are more efficient to query linearly. When the expected proportion of hits
 // is a above this number it becomes a simple subtree.
-const SIMPLE_SUBTREE_DENSITY_CUTOFF: f64 = 0.2;
+const SIMPLE_SUBTREE_DENSITY_CUTOFF: f32 = 0.2;
 
 
 /// A trait facilitating COITree index types.
@@ -590,7 +590,7 @@ struct TraversalInfo<I> where I: IntWithMax {
     preorder: I, // pre-order visit number
     subtree_size: I,
     parent: I,
-    expected_hit_proportion: f64,
+    expected_hit_proportion: f32,
 }
 
 
@@ -631,11 +631,11 @@ fn traverse_recursion<T, I>(
         depth: u32,
         parent: I,
         inorder: &mut usize,
-        preorder: &mut usize) -> (I, i32, f64)
+        preorder: &mut usize) -> (I, i32, f32)
         where T: Clone, I: IntWithMax {
 
     if start >= end {
-        return (I::MAX, i32::MAX, f64::NAN);
+        return (I::MAX, i32::MAX, f32::NAN);
     }
 
     let root_idx = start + (end - start) / 2;
@@ -693,11 +693,11 @@ fn traverse_recursion<T, I>(
     debug_assert!(right_subtree_span <= subtree_span);
 
     let expected_hits =
-        (nodes[root_idx].last - nodes[root_idx].first + 1) as f64 / subtree_span as f64 +
-        (left_subtree_span as f64 / subtree_span as f64) * left_expected_hits +
-        (right_subtree_span as f64 / subtree_span as f64) * right_expected_hits;
+        ((nodes[root_idx].last - nodes[root_idx].first + 1) as f32 +
+        (left_subtree_span as f32) * left_expected_hits +
+        (right_subtree_span as f32) * right_expected_hits) / subtree_span as f32;
 
-    info[root_idx].expected_hit_proportion = expected_hits / subtree_size as f64;
+    info[root_idx].expected_hit_proportion = expected_hits / subtree_size as f32;
 
     return (I::from_usize(root_idx), subtree_first, expected_hits);
 }
@@ -899,9 +899,9 @@ fn veb_order_recursion<T, I>(
         // all children nodes record the size of the remaining list
         // let mut subtree_i_size = subtree_size - i;
         let mut subtree_i_size = subtree_size;
-        for i in 0..subtree_size.to_usize() {
-            nodes[idxs[start+i].to_usize()].left = subtree_i_size;
-            nodes[idxs[start+i].to_usize()].right = subtree_i_size;
+        for idx in &idxs[start..end] {
+            nodes[idx.to_usize()].left = subtree_i_size;
+            nodes[idx.to_usize()].right = subtree_i_size;
             subtree_i_size -= I::one();
         }
 
