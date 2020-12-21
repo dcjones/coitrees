@@ -769,7 +769,7 @@ fn veb_order<T, I>(mut nodes: Vec<IntervalNode<T, I>>) -> (Vec<IntervalNode<T, I
         return (veb_nodes, 0, 0);
     }
 
-    nodes.sort_unstable_by_key(|node| node.first);
+    nodes.sort_unstable_by_key(|node| (node.first, node.last));
     // eprintln!("sorting nodes: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
     // let now = Instant::now();
