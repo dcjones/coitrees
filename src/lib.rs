@@ -10,6 +10,7 @@ use std::fmt::Debug;
 use std::collections::{Bound, BTreeMap, HashMap};
 use std::option::Option;
 use std::time::Instant;
+use std::cmp::min;
 
 extern crate num_traits;
 use num_traits::Bounded;
@@ -21,11 +22,9 @@ use num_traits::Bounded;
 // };
 
 
-const DEFAULT_SPARSITY: f64 = 10.0;
+const DEFAULT_SPARSITY: i64 = 10;
 const MIN_FINAL_SEQ_LEN: usize = 16;
 
-
-// TODO: Let's not use i64 by default. Use i32 
 
 #[derive(Debug)]
 pub struct Interval<I, T> {
@@ -58,11 +57,11 @@ pub struct COITree<I, T> {
 pub struct SurplusTreeNode {
     // how many more points could lie below the y boundary before
     // the query region represented by this tree becomes sparse
-    surplus: f64,
+    surplus: i64,
 
     // minimum surplus of any prefix in the subtree rooted at this node.
     // this is called "tolerance" in the Arge paper
-    min_prefix_surplus: f64,
+    min_prefix_surplus: i64,
 
     // number of leaf nodes in the subtree not marked as dead
     live_nodes: usize
@@ -72,8 +71,8 @@ pub struct SurplusTreeNode {
 impl Default for SurplusTreeNode {
     fn default() -> Self {
         return SurplusTreeNode {
-            surplus: f64::NAN,
-            min_prefix_surplus: f64::NAN,
+            surplus: i64::MIN,
+            min_prefix_surplus: i64::MIN,
             live_nodes: 0,
         };
     }
@@ -85,7 +84,7 @@ impl Default for SurplusTreeNode {
 /// whether there are any sparse queries and where the maximum x value is
 /// for that query.
 pub struct SurplusTree {
-    sparsity: f64,
+    sparsity: i64,
 
     // these are stored in binary heap order
     nodes: Vec<SurplusTreeNode>,
@@ -203,9 +202,10 @@ fn next_live_leaf(nodes: &Vec<SurplusTreeNode>, mut i: usize) -> Option<usize> {
 
 
 impl SurplusTree where {
-    fn new<I, T>(intervals: &Vec<Interval<I, T>>, sparsity: f64) -> Self
+    fn new<I, T>(intervals: &Vec<Interval<I, T>>, sparsity: i64) -> Self
             where I: Ord + Copy {
         let n = intervals.len();
+        assert!(sparsity > 1);
 
         // permutation that puts (y-sorted) nodes in x-sorted order.
         let mut xperm: Vec<usize> = (0..n).collect();
@@ -248,8 +248,8 @@ impl SurplusTree where {
                 nodes[i].live_nodes = 1;
             }
 
-            nodes[i].min_prefix_surplus = sparsity - 1.0;
-            nodes[i].surplus = (sparsity - 1.0) * nodes[i].live_nodes as f64;
+            nodes[i].min_prefix_surplus = sparsity - 1;
+            nodes[i].surplus = (sparsity - 1) * nodes[i].live_nodes as i64;
 
             if i == 0 {
                 break;
@@ -320,8 +320,8 @@ impl SurplusTree where {
             //     left_surplus + right_min_prefix_surplus);
 
             let l = left_min_prefix_surplus;
-            let r = left_surplus + right_min_prefix_surplus;
-            node_root.min_prefix_surplus = if l < r { l } else { r };
+            let r = left_surplus.saturating_add(right_min_prefix_surplus);
+            node_root.min_prefix_surplus = min(l, r);
 
             visit(node_root);
         }
@@ -335,13 +335,13 @@ impl SurplusTree where {
         {
             let node = &mut self.nodes[j];
             // disregard any prefix that ends on this node
-            node.min_prefix_surplus = f64::INFINITY;
-            node.surplus += 1.0;
+            node.min_prefix_surplus = i64::MAX;
+            node.surplus += 1;
             node.live_nodes -= 1;
 
         }
         self.update_ancestors(j, |node| {
-            node.surplus += 1.0;
+            node.surplus += 1;
             node.live_nodes -= 1;
         });
     }
@@ -353,7 +353,7 @@ impl SurplusTree where {
         {
             let node = &mut self.nodes[j];
             // disregard any prefix that ends on this node
-            node.min_prefix_surplus = f64::INFINITY;
+            node.min_prefix_surplus = i64::MAX;
             node.surplus -= self.sparsity;
         }
 
@@ -418,24 +418,28 @@ impl SurplusTree where {
     // maximum x boundary..
     // If there is no sparse query, return None.
     fn find_sparse_query_prefix(&self) -> Option<usize> {
-        if self.nodes[0].min_prefix_surplus >= 0.0 {
+        if self.nodes[0].min_prefix_surplus >= 0 {
             return None;
         } else {
             let n = self.len();
             let mut j = 0;
-            let mut prefix_surplus = 0.0;
+            let mut prefix_surplus: i64 = 0;
             loop {
                 let left = 2*j+1;
                 let right = 2*j+2;
                 debug_assert!((left < n) == (right < n));
 
+                // TODO: Since we are setting min_prefix_surplus to MAX
+                // this causes the following addition to overflow, fucking
+                // thing up.
+
                 if left < n {
                     let right_prefix_surplus =
-                        prefix_surplus +
-                        self.nodes[left].surplus +
-                        self.nodes[right].min_prefix_surplus;
+                        prefix_surplus
+                            .saturating_add(self.nodes[left].surplus)
+                            .saturating_add(self.nodes[right].min_prefix_surplus);
 
-                    if right_prefix_surplus < 0.0 {
+                    if right_prefix_surplus < 0 {
                         prefix_surplus += self.nodes[left].surplus;
                         j = right;
                     } else {
@@ -459,7 +463,7 @@ impl SurplusTree where {
             //     }
             // }
 
-            assert!(prefix_surplus < 0.0);
+            assert!(prefix_surplus < 0);
             return Some(j);
         }
     }
@@ -473,9 +477,9 @@ impl<I, T> COITree<I, T> {
     }
 
     // TODO: is intervals getting copied here? Should I be using a mutable ref?
-    pub fn with_sparsity(mut intervals: Vec<Interval<I, T>>, sparsity: f64) -> COITree<I, T>
+    pub fn with_sparsity(mut intervals: Vec<Interval<I, T>>, sparsity: i64) -> COITree<I, T>
             where I: Bounded + Ord + Copy + Debug, T: Copy {
-        assert!(sparsity > 1.0);
+        assert!(sparsity > 1);
 
         let n = intervals.len();
 
@@ -487,7 +491,7 @@ impl<I, T> COITree<I, T> {
             }
         }
 
-        let max_size: usize = ((sparsity / (sparsity - 1.0)) * (n as f64)).ceil() as usize;
+        let max_size: usize = ((sparsity as f64 / (sparsity - 1) as f64) * (n as f64)).ceil() as usize;
         dbg!(max_size);
 
         let mut searchable_intervals: Vec<Interval<I, u32>> = Vec::with_capacity(max_size);
