@@ -579,9 +579,9 @@ impl<I, T> COITree<I, T> {
             }
         }
 
-        // dbg!(&searchable_intervals);
+        dbg!(&searchable_intervals[0..100]);
         dbg!(searchable_intervals.len());
-        // dbg!(&index);
+        dbg!(&index);
         dbg!(index.len());
 
         // TODO: under this scheme we end copying metadata entries. That's bad
@@ -611,7 +611,7 @@ impl<I, T> COITree<I, T> {
 
         // LAST is unused. WTF?
 
-        if let Some(search_start) = self.find_search_start(last) {
+        if let Some(search_start) = self.find_search_start(first) {
             // dbg!((first, last, search_start));
 
             let mut last_hit_first = I::min_value();
