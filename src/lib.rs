@@ -9,6 +9,7 @@
 use std::fmt::Debug;
 use std::collections::{Bound, BTreeMap, HashMap};
 use std::option::Option;
+use std::time::Instant;
 
 extern crate num_traits;
 use num_traits::Bounded;
@@ -20,7 +21,7 @@ use num_traits::Bounded;
 // };
 
 
-const DEFAULT_SPARSITY: f64 = 2.0;
+const DEFAULT_SPARSITY: f64 = 10.0;
 const MIN_FINAL_SEQ_LEN: usize = 16;
 
 
@@ -137,6 +138,68 @@ pub struct SurplusTree {
 //     }
 // }
 
+// Function for traversing from one leaf node index to the next.
+fn next_live_leaf(nodes: &Vec<SurplusTreeNode>, mut i: usize) -> Option<usize> {
+    let num_nodes = nodes.len();
+
+    let mut left = 2*i+1;
+    let mut right = 2*i+2;
+
+    if left < num_nodes {
+        // internal node: climb down until we find a live leaf
+        if nodes[i].live_nodes == 0 {
+            return None;
+        }
+
+        while left < num_nodes {
+            if nodes[left].live_nodes > 0 {
+                i = left;
+            } else {
+                i = right;
+            }
+
+            left = 2*i+1;
+            right = 2*i+2;
+        }
+    } else {
+        // leaf node: climb up until we are someone's left child and right
+        // is live
+
+        loop {
+            if i == 0 {
+                return None;
+            }
+
+            let parent = (i-1)/2;
+            let parent_left = 2*parent+1;
+            let parent_right = 2*parent+2;
+
+            debug_assert!(i == parent_left || i == parent_right);
+            if i == parent_left && nodes[parent_right].live_nodes > 0 {
+                i = parent_right;
+                break;
+            }
+
+            i = parent;
+        }
+
+        // now climb down and find a live node
+        left = 2*i+1;
+        right = 2*i+2;
+        while left < num_nodes {
+            if nodes[left].live_nodes > 0 {
+                i = left;
+            } else {
+                i = right;
+            }
+
+            left = 2*i+1;
+            right = 2*i+2;
+        }
+    }
+
+    return Some(i);
+}
 
 
 impl SurplusTree where {
@@ -146,68 +209,68 @@ impl SurplusTree where {
 
         // permutation that puts (y-sorted) nodes in x-sorted order.
         let mut xperm: Vec<usize> = (0..n).collect();
-        xperm.sort_unstable_by_key(|i| intervals[*i].first);
 
-        let mut nodes = vec![SurplusTreeNode::default(); 2*n-1];
+        // OPT: most expensive part of this function
+        xperm.sort_unstable_by_key(|i| intervals[*i].first);
+        // xperm.sort_unstable_by_key(|i| unsafe { intervals.get_unchecked(*i) }.first);
+
+        let num_nodes = 2*n-1;
+        let mut nodes = vec![SurplusTreeNode::default(); num_nodes];
         let mut leaf_to_index: HashMap<usize, (usize, u32)> = HashMap::with_capacity(n);
         let mut index_to_leaf: Vec<usize> = vec![usize::MAX; n];
 
-        // basically doing a manual closure here so I can do recursion
-        struct TraverseContext<'a> {
-            nodes: &'a mut Vec<SurplusTreeNode>,
-            leaf_to_index: &'a mut HashMap<usize, (usize, u32)>,
-            xperm: &'a Vec<usize>,
-            sparsity: f64
-        }
+        // go up the tree setting internal node values
 
-        // TODO: This initialization scheme is brutally slow. We should be able
-        // to do this by iterating through indexes in reverse and passing up
-        // the subtree size (which is the only info we need).
+        // this version won't work because we have to borrow multiple times
+        // for (i_rev, node) in nodes.iter_mut().rev().enumerate() {
+        //     let i = num_nodes - i_rev - 1;
+        //     let left = 2*i+1;
+        //     let right = 2*i+2;
+        //     if left < num_nodes {
+        //         node.live_nodes = nodes[left].live_nodes + nodes[right].live_nodes;
+        //     } else {
+        //         node.live_nodes = 1;
+        //     }
 
-        // traverse the implicit tree initializing `nodes` and `index_to_leaf`.
-        fn init_traverse(
-                ctx: &mut TraverseContext,
-                i: usize, leaf_count: &mut usize) -> usize {
-            let n = ctx.nodes.len();
-            if i >= n {
-                return 0;
-            }
+        //     node.min_prefix_surplus = sparsity - 1.0;
+        //     node.surplus = (sparsity - 1.0) * node.live_nodes as f64;
+        // }
 
+        let mut i = nodes.len() - 1;
+        loop {
             let left = 2*i+1;
             let right = 2*i+2;
 
-            // this is a leaf node
-            let mut subtree_leaf_count = 0;
-
-            if left >= n && right >= n {
-                subtree_leaf_count += 1;
-                let idx = ctx.xperm[*leaf_count];
-                ctx.leaf_to_index.insert(i, (idx, *leaf_count as u32 + 1));
-                *leaf_count += 1;
+            // is a leaf node
+            if left < nodes.len() {
+                nodes[i].live_nodes = nodes[left].live_nodes + nodes[right].live_nodes;
             } else {
-                if left < n {
-                    subtree_leaf_count += init_traverse(ctx, left, leaf_count);
-                }
-                if right < n {
-                    subtree_leaf_count += init_traverse(ctx, right, leaf_count);
-                }
+                nodes[i].live_nodes = 1;
             }
 
-            ctx.nodes[i].surplus = (ctx.sparsity - 1.0) * (subtree_leaf_count as f64);
-            ctx.nodes[i].min_prefix_surplus = ctx.sparsity - 1.0;
-            ctx.nodes[i].live_nodes = subtree_leaf_count;
+            nodes[i].min_prefix_surplus = sparsity - 1.0;
+            nodes[i].surplus = (sparsity - 1.0) * nodes[i].live_nodes as f64;
 
-            return subtree_leaf_count;
-        };
+            if i == 0 {
+                break;
+            } else {
+                i -= 1;
+            }
+        }
 
+        // iterate through leaves, building `leaf_to_index`, and initializing
+        // leaf node values
+        let mut i = 0;
         let mut leaf_count = 0;
-        init_traverse(
-            &mut TraverseContext{
-                nodes: &mut nodes,
-                leaf_to_index: &mut leaf_to_index,
-                xperm: &mut xperm,
-                sparsity: sparsity },
-            0, &mut leaf_count);
+        while let Some(j) = next_live_leaf(&nodes, i) {
+            let idx = xperm[leaf_count];
+
+            // OPT: second most expensive part of this function
+            leaf_to_index.insert(j, (idx, leaf_count as u32 + 1));
+            leaf_count += 1;
+            i = j;
+        }
+        assert!(leaf_to_index.len() == n);
 
         // reverse the map
         for (k, (v, _)) in &leaf_to_index {
@@ -332,75 +395,12 @@ impl SurplusTree where {
     }
 
 
-    fn next_live_leaf(&self, mut i: usize) -> Option<usize> {
-        let num_nodes = self.len();
-
-        let mut left = 2*i+1;
-        let mut right = 2*i+2;
-
-        if left < num_nodes {
-            // internal node: climb down until we find a live leaf
-            if self.nodes[i].live_nodes == 0 {
-                return None;
-            }
-
-            while left < num_nodes {
-                if self.nodes[left].live_nodes > 0 {
-                    i = left;
-                } else {
-                    i = right;
-                }
-
-                left = 2*i+1;
-                right = 2*i+2;
-            }
-        } else {
-            // leaf node: climb up until we are someone's left child and right
-            // is live
-
-            loop {
-                if i == 0 {
-                    return None;
-                }
-
-                let parent = (i-1)/2;
-                let parent_left = 2*parent+1;
-                let parent_right = 2*parent+2;
-
-                debug_assert!(i == parent_left || i == parent_right);
-                if i == parent_left && self.nodes[parent_right].live_nodes > 0 {
-                    i = parent_right;
-                    break;
-                }
-
-                i = parent;
-            }
-
-            // now climb down and find a live node
-            left = 2*i+1;
-            right = 2*i+2;
-            while left < num_nodes {
-                if self.nodes[left].live_nodes > 0 {
-                    i = left;
-                } else {
-                    i = right;
-                }
-
-                left = 2*i+1;
-                right = 2*i+2;
-            }
-        }
-
-        return Some(i);
-    }
-
-
     fn map_prefix<F>(&mut self, end_idx: usize, mut visit: F)
             where F: FnMut(&mut Self, usize, u32) {
 
         let mut i = 0;
         loop {
-            if let Some(j) = self.next_live_leaf(i) {
+            if let Some(j) = next_live_leaf(&self.nodes, i) {
                 let idx = self.leaf_to_index[&j];
                 visit(self, idx.0, idx.1);
                 if j == end_idx {
@@ -417,8 +417,7 @@ impl SurplusTree where {
     // If there is a sparse query, return the index with the corresponding
     // maximum x boundary..
     // If there is no sparse query, return None.
-    fn find_sparse_query_prefix<I, T>(&self, intervals: &Vec<Interval<I, T>>) -> Option<usize>
-            where I: Ord {
+    fn find_sparse_query_prefix(&self) -> Option<usize> {
         if self.nodes[0].min_prefix_surplus >= 0.0 {
             return None;
         } else {
@@ -488,7 +487,7 @@ impl<I, T> COITree<I, T> {
             }
         }
 
-        let max_size: usize = (sparsity * (n as f64)).ceil() as usize;
+        let max_size: usize = ((sparsity / (sparsity - 1.0)) * (n as f64)).ceil() as usize;
         dbg!(max_size);
 
         let mut searchable_intervals: Vec<Interval<I, u32>> = Vec::with_capacity(max_size);
@@ -499,8 +498,9 @@ impl<I, T> COITree<I, T> {
 
         intervals.sort_unstable_by_key(|i| i.last);
 
+        let now = Instant::now();
         let mut surplus_tree = SurplusTree::new(&intervals, sparsity);
-
+        eprintln!("SurplusTree::new: {}", now.elapsed().as_millis() as f64 / 1000.0);
 
         // searchable intervals stores an extra integer to disambiguate and
         // avoid counting the same hits more than once.
@@ -510,6 +510,7 @@ impl<I, T> COITree<I, T> {
         // Ok, where do we assign them then?
         // Can `map_prefix` keep track of the leaf number?
 
+        let now = Instant::now();
         let mut i = 0;
         while i < n && surplus_tree.num_live_nodes() > 0 {
 
@@ -517,7 +518,7 @@ impl<I, T> COITree<I, T> {
                 i = n-1;
                 surplus_tree.last_live_leaf()
             } else {
-                surplus_tree.find_sparse_query_prefix(&intervals)
+                surplus_tree.find_sparse_query_prefix()
             };
 
             if let Some(max_end) = max_end_opt {
@@ -558,6 +559,7 @@ impl<I, T> COITree<I, T> {
                 i += 1;
             }
         }
+        eprintln!("SurplusTree::new: {}", now.elapsed().as_millis() as f64 / 1000.0);
 
         dbg!(searchable_intervals.len());
         dbg!(index.len());
@@ -586,6 +588,7 @@ impl<I, T> COITree<I, T> {
     pub fn query_count(&self, first: I, last: I) -> usize
             where I: Bounded + Ord + Copy + Debug {
 
+        // let mut misses = 0;
         let mut count = 0;
         if let Some(search_start) = self.find_search_start(first) {
             let mut last_hit_id: u32 = 0;
@@ -593,12 +596,17 @@ impl<I, T> COITree<I, T> {
                 if interval.first > last {
                     break;
                 } else if interval.last >= first && interval.metadata > last_hit_id {
-                    debug_assert!(interval.first <= last);
+                    // debug_assert!(interval.first <= last);
                     count += 1;
                     last_hit_id = interval.metadata;
                 }
+                // } else {
+                    // misses += 1;
+                // }
             }
         }
+
+        // eprintln!("hit prop: {}", count as f64 / (count + misses) as f64);
 
         return count;
     }
