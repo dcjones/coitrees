@@ -3,6 +3,7 @@
 //! `coitrees` implements a fast static interval tree data structure with genomic
 //! data in mind.
 //!
+//! 
 
 // use std::marker::Copy;
 // use std::convert::{TryInto, TryFrom};
@@ -21,8 +22,7 @@ use num_traits::Bounded;
 
 
 const DEFAULT_SPARSITY: f64 = 2.0;
-// const MIN_FINAL_SEQ_LEN: usize = 16;
-const MIN_FINAL_SEQ_LEN: usize = 1;
+const MIN_FINAL_SEQ_LEN: usize = 16;
 
 
 // TODO: Let's not use i64 by default. Use i32 
@@ -208,15 +208,7 @@ impl SurplusTree where {
                 self.nodes[j].min_prefix_surplus = right_mps + left_surp;
             }
         }
-        // else {
-            // leaf node, so min_prefix_surplus = surplus
-            // if self.nodes[j].live_nodes > 0 {
-            //     self.nodes[j].min_prefix_surplus = self.nodes[j].surplus;
-            // } else {
-                // self.nodes[j].min_prefix_surplus = f64::INFINITY;
-            // }
-        }
-    // }
+    }
 
     // Called on nodes below the sweep line when they are also to the left of
     // the maximum sparse x query point (and thus no longer in S_i)
@@ -415,7 +407,7 @@ impl SurplusTree where {
             // this is to avoid splitting up points that share the same values,
             // which leads to issues.
             // while let Some(k) = self.next_live_leaf(j) {
-            //     if intervals[self.leaf_to_index[&j]].first == intervals[self.leaf_to_index[&k]].first {
+            //     if intervals[self.leaf_to_index[&j].0].first == intervals[self.leaf_to_index[&k].0].first {
             //         j = k;
             //     } else {
             //         break;
@@ -482,19 +474,8 @@ impl<I, T> COITree<I, T> {
                 surplus_tree.find_sparse_query_prefix(&intervals)
             };
 
-            // dbg!(i);
-            // dbg!(surplus_tree.nodes[0].live_nodes);
-            // dbg!(surplus_tree.nodes[0].min_prefix_surplus);
-
             if let Some(max_end) = max_end_opt {
                 let boundary = intervals[i].last;
-                dbg!(boundary);
-                // dbg!(intervals[surplus_tree.leaf_to_index[&max_end]].first);
-                // dbg!(max_end);
-
-                // for node in &surplus_tree.nodes {
-                //     dbg!(node);
-                // }
 
                 let mut killed_count = 0;
                 let mut l_count = 0;
@@ -516,24 +497,11 @@ impl<I, T> COITree<I, T> {
                     }
                 });
 
-                // dbg!((killed_count, l_count));
-
-                // if !(i == n-1 || killed_count > l_count - killed_count) {
-                //     dbg!(&searchable_intervals[searchable_intervals.len()-l_count..]);
-                // }
-
-                // assert!(i == n-1 || killed_count > l_count - killed_count);
-
-                // for interval in &searchable_intervals[searchable_intervals.len()-l_count..] {
-                //     dbg!(interval);
-                // }
-
                 if i < n-1 {
                     index.insert(boundary, searchable_intervals.len());
                 }
             }
 
-            // eprintln!("useless: {:?}", intervals[i].last);
             surplus_tree.set_node_useless(i);
             i += 1;
 
@@ -545,9 +513,7 @@ impl<I, T> COITree<I, T> {
             }
         }
 
-        // dbg!(&searchable_intervals[0..100]);
         dbg!(searchable_intervals.len());
-        // dbg!(&index);
         dbg!(index.len());
 
         // TODO: under this scheme we end copying metadata entries. That's bad
@@ -562,6 +528,7 @@ impl<I, T> COITree<I, T> {
     }
 
 
+    #[inline(always)]
     fn find_search_start(&self, first: I) -> Option<usize> where I: Ord {
         if let Some((_, i)) = self.index.range((Bound::Unbounded, Bound::Included(first))).next_back() {
             return Some(*i);
@@ -576,9 +543,7 @@ impl<I, T> COITree<I, T> {
         let mut count = 0;
         if let Some(search_start) = self.find_search_start(first) {
             let mut last_hit_id: u32 = 0;
-            let mut misses = 0;
             for interval in &self.intervals[search_start..] {
-                // dbg!(interval);
                 if interval.first > last {
                     break;
 
@@ -586,12 +551,8 @@ impl<I, T> COITree<I, T> {
                     assert!(interval.first <= last);
                     count += 1;
                     last_hit_id = interval.metadata;
-                } else {
-                    misses += 1;
                 }
             }
-
-            // println!("count, misses = {}, {}", count, misses);
         }
 
         return count;
