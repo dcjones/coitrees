@@ -47,7 +47,7 @@ pub struct COITree<I, T> {
     index: BTreeMap<I, usize>,
 
     // intervals arranged to facilitate linear searches
-    intervals: Vec<PlainInterval<I>>,
+    intervals: Vec<Interval<I, u32>>,
 
     // metadata associated with each interval in intervals
     metadata: Vec<T>
@@ -90,22 +90,13 @@ pub struct SurplusTree {
     // these are stored in binary heap order
     nodes: Vec<SurplusTreeNode>,
 
-    // map (x-sorted) leaf index to the corresponding (y-sorted) index
-    // in the `intervals` vector. We additionally delete points when they
-    // become dead to facilitate enumerating L_i
-
-    // TODO: I don't think this needs to be ordered. Use a a hash table.
-    leaf_to_index: HashMap<usize, usize>,
+    // map (x-sorted) leaf index to the corresponding (y-sorted) index in the
+    // `intervals` vector, along with its leaf number. We additionally delete
+    // points when they become dead to facilitate enumerating L_i
+    leaf_to_index: HashMap<usize, (usize, u32)>,
 
     // reverse direction: map node index to leaf node index
     index_to_leaf: Vec<usize>,
-
-    // TODO: don't think we need this because we can just check leaf_to_node
-
-    // for each leaf, true if the point is not dead
-    // (a point gets killed if its in L_i - L'_i)
-    // We could use the bitmap crate to make this a little faster
-    // alive: Vec<bool>
 }
 
 
@@ -119,22 +110,25 @@ impl SurplusTree where {
         xperm.sort_unstable_by_key(|i| intervals[*i].first);
 
         let mut nodes = vec![SurplusTreeNode::default(); 2*n-1];
-        let mut leaf_to_index: HashMap<usize, usize> = HashMap::with_capacity(n);
+        let mut leaf_to_index: HashMap<usize, (usize, u32)> = HashMap::with_capacity(n);
         let mut index_to_leaf: Vec<usize> = vec![usize::MAX; n];
 
         // basically doing a manual closure here so I can do recursion
-        struct TraverseContext<'a, I, T> {
-            intervals: &'a Vec<Interval<I, T>>,
+        struct TraverseContext<'a> {
             nodes: &'a mut Vec<SurplusTreeNode>,
-            leaf_to_index: &'a mut HashMap<usize, usize>,
+            leaf_to_index: &'a mut HashMap<usize, (usize, u32)>,
             xperm: &'a Vec<usize>,
             sparsity: f64
         }
 
+        // TODO: This initialization scheme is brutally slow. We should be able
+        // to do this by iterating through indexes in reverse and passing up
+        // the subtree size (which is the only info we need).
+
         // traverse the implicit tree initializing `nodes` and `index_to_leaf`.
-        fn init_traverse<I, T>(
-                ctx: &mut TraverseContext<I, T>,
-                i: usize, leaf_count: &mut usize) -> usize where I: Ord {
+        fn init_traverse(
+                ctx: &mut TraverseContext,
+                i: usize, leaf_count: &mut usize) -> usize {
             let n = ctx.nodes.len();
             if i >= n {
                 return 0;
@@ -149,7 +143,7 @@ impl SurplusTree where {
             if left >= n && right >= n {
                 subtree_leaf_count += 1;
                 let idx = ctx.xperm[*leaf_count];
-                ctx.leaf_to_index.insert(i, idx);
+                ctx.leaf_to_index.insert(i, (idx, *leaf_count as u32 + 1));
                 *leaf_count += 1;
             } else {
                 if left < n {
@@ -170,7 +164,6 @@ impl SurplusTree where {
         let mut leaf_count = 0;
         init_traverse(
             &mut TraverseContext{
-                intervals: intervals,
                 nodes: &mut nodes,
                 leaf_to_index: &mut leaf_to_index,
                 xperm: &mut xperm,
@@ -178,7 +171,7 @@ impl SurplusTree where {
             0, &mut leaf_count);
 
         // reverse the map
-        for (k, v) in &leaf_to_index {
+        for (k, (v, _)) in &leaf_to_index {
             index_to_leaf[*v] = *k;
         }
 
@@ -198,6 +191,7 @@ impl SurplusTree where {
         return self.nodes[0].surplus < 0.0;
     }
 
+    // #[inline(always)]
     fn update_min_prefix_surplus(&mut self, j: usize) {
         let left = 2*j+1;
         let right = 2*j+2;
@@ -244,6 +238,10 @@ impl SurplusTree where {
             }
         }
     }
+
+    // TODO: This is another big initialization bottleneck. I think the only
+    // hope is to avoid bounds checking wherever possible, possibly even
+    // resorting to unsafe block.
 
     // Called on nodes when they fall below the sweep line
     fn set_node_useless(&mut self, i: usize) {
@@ -358,25 +356,15 @@ impl SurplusTree where {
         return Some(i);
     }
 
-    // Iterate through a non-dead x-sorted prefix. Stop when we hit the leaf
-    // node with the give index. The iterator returns indexes into the intervals
-    // array
-    fn prefix(&mut self, end_idx: usize) -> SurplusTreePrefixIterator {
-        return SurplusTreePrefixIterator {
-            i: self.next_live_leaf(0),
-            end_idx: end_idx,
-            tree: self
-        }
-    }
-
 
     fn map_prefix<F>(&mut self, end_idx: usize, mut visit: F)
-            where F: FnMut(&mut Self, usize) {
+            where F: FnMut(&mut Self, usize, u32) {
 
         let mut i = 0;
         loop {
             if let Some(j) = self.next_live_leaf(i) {
-                visit(self, self.leaf_to_index[&j]);
+                let idx = self.leaf_to_index[&j];
+                visit(self, idx.0, idx.1);
                 if j == end_idx {
                     break;
                 }
@@ -391,7 +379,8 @@ impl SurplusTree where {
     // If there is a sparse query, return the index with the corresponding
     // maximum x boundary..
     // If there is no sparse query, return None.
-    fn find_sparse_query_prefix(&self) -> Option<usize> {
+    fn find_sparse_query_prefix<I, T>(&self, intervals: &Vec<Interval<I, T>>) -> Option<usize>
+            where I: Ord {
         if self.nodes[0].min_prefix_surplus >= 0.0 {
             return None;
         } else {
@@ -421,36 +410,20 @@ impl SurplusTree where {
                 }
             }
 
+            // TODO: This doesn't really resolve the issue. Any point in keeping it?
+            // find the furthest leaf node that shares the same `first` value
+            // this is to avoid splitting up points that share the same values,
+            // which leads to issues.
+            // while let Some(k) = self.next_live_leaf(j) {
+            //     if intervals[self.leaf_to_index[&j]].first == intervals[self.leaf_to_index[&k]].first {
+            //         j = k;
+            //     } else {
+            //         break;
+            //     }
+            // }
+
             assert!(prefix_surplus < 0.0);
             return Some(j);
-        }
-    }
-}
-
-// TODO: Why even bother making this an iterator. Why not just use a callback?
-
-struct SurplusTreePrefixIterator<'a> {
-    // current leaf node index
-    i: Option<usize>,
-    end_idx: usize,
-    tree: &'a mut SurplusTree
-}
-
-impl<'a> Iterator for SurplusTreePrefixIterator<'a> {
-    type Item = usize;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some(i) = self.i {
-            let j = self.tree.leaf_to_index[&i];
-            if i == self.end_idx {
-                self.i = None;
-            } else {
-                self.i = self.tree.next_live_leaf(i);
-            }
-
-            return Some(j);
-        } else {
-            return None;
         }
     }
 }
@@ -480,7 +453,7 @@ impl<I, T> COITree<I, T> {
         let max_size: usize = (sparsity * (n as f64)).ceil() as usize;
         dbg!(max_size);
 
-        let mut searchable_intervals: Vec<PlainInterval<I>> = Vec::with_capacity(max_size);
+        let mut searchable_intervals: Vec<Interval<I, u32>> = Vec::with_capacity(max_size);
         let mut metadata: Vec<T> = Vec::with_capacity(max_size);
         let mut index: BTreeMap<I, usize> = BTreeMap::new();
 
@@ -490,32 +463,23 @@ impl<I, T> COITree<I, T> {
 
         let mut surplus_tree = SurplusTree::new(&intervals, sparsity);
 
-        // for node in &surplus_tree.nodes {
-        //     dbg!(node);
-        // }
 
-        // TODO: How do I write the sequences?
-        // They are x-sorted, so it has to be done by walking though
-        // the surplus tree, dumping all nodes that aren't marked dead.
-        //
-        // Output should be x-sorted, so I need to walk the surplus tree.
+        // searchable intervals stores an extra integer to disambiguate and
+        // avoid counting the same hits more than once.
+
+        // TODO: NO THIS DOESN'T DISAMBIGUATE AT ALL
+        // We need to assign these ids to leaves in the surplus tree
+        // Ok, where do we assign them then?
+        // Can `map_prefix` keep track of the leaf number?
 
         let mut i = 0;
         while i < n && surplus_tree.num_live_nodes() > 0 {
-
-            // can't place a boundary between equal values, so consume
-            // everything that shares a value in one chunk
-            // if i + 1 < n && intervals[i].last ==  intervals[i+1].last {
-            //     surplus_tree.set_node_useless(i);
-            //     i += 1;
-            //     continue;
-            // }
 
             let max_end_opt = if n - i <= MIN_FINAL_SEQ_LEN {
                 i = n-1;
                 surplus_tree.last_live_leaf()
             } else {
-                surplus_tree.find_sparse_query_prefix()
+                surplus_tree.find_sparse_query_prefix(&intervals)
             };
 
             // dbg!(i);
@@ -524,7 +488,7 @@ impl<I, T> COITree<I, T> {
 
             if let Some(max_end) = max_end_opt {
                 let boundary = intervals[i].last;
-                // dbg!(boundary);
+                dbg!(boundary);
                 // dbg!(intervals[surplus_tree.leaf_to_index[&max_end]].first);
                 // dbg!(max_end);
 
@@ -535,16 +499,14 @@ impl<I, T> COITree<I, T> {
                 let mut killed_count = 0;
                 let mut l_count = 0;
 
-                surplus_tree.map_prefix(max_end, |tree, idx| {
-                    // TODO: wait, this is only in L if interval.first <= our
-                    // max query.
-
+                surplus_tree.map_prefix(max_end, |tree, idx, leaf_num| {
                     let interval = &intervals[idx];
-                    searchable_intervals.push(PlainInterval{
+                    searchable_intervals.push(Interval{
                         first: interval.first,
                         last: interval.last,
-                        metadata: ()
+                        metadata: leaf_num,
                     });
+
                     metadata.push(interval.metadata);
                     l_count += 1;
 
@@ -556,11 +518,15 @@ impl<I, T> COITree<I, T> {
 
                 // dbg!((killed_count, l_count));
 
-                if !(i == n-1 || killed_count > l_count - killed_count) {
-                    dbg!(&searchable_intervals[searchable_intervals.len()-l_count..]);
-                }
+                // if !(i == n-1 || killed_count > l_count - killed_count) {
+                //     dbg!(&searchable_intervals[searchable_intervals.len()-l_count..]);
+                // }
 
-                assert!(i == n-1 || killed_count > l_count - killed_count);
+                // assert!(i == n-1 || killed_count > l_count - killed_count);
+
+                // for interval in &searchable_intervals[searchable_intervals.len()-l_count..] {
+                //     dbg!(interval);
+                // }
 
                 if i < n-1 {
                     index.insert(boundary, searchable_intervals.len());
@@ -579,9 +545,9 @@ impl<I, T> COITree<I, T> {
             }
         }
 
-        dbg!(&searchable_intervals[0..100]);
+        // dbg!(&searchable_intervals[0..100]);
         dbg!(searchable_intervals.len());
-        dbg!(&index);
+        // dbg!(&index);
         dbg!(index.len());
 
         // TODO: under this scheme we end copying metadata entries. That's bad
@@ -608,22 +574,18 @@ impl<I, T> COITree<I, T> {
             where I: Bounded + Ord + Copy + Debug {
 
         let mut count = 0;
-
-        // LAST is unused. WTF?
-
         if let Some(search_start) = self.find_search_start(first) {
-            // dbg!((first, last, search_start));
-
-            let mut last_hit_first = I::min_value();
+            let mut last_hit_id: u32 = 0;
             let mut misses = 0;
             for interval in &self.intervals[search_start..] {
                 // dbg!(interval);
                 if interval.first > last {
                     break;
-                } else if interval.last >= first && interval.first >= last_hit_first {
-                    debug_assert!(interval.first <= last);
+
+                } else if interval.last >= first && interval.metadata > last_hit_id {
+                    assert!(interval.first <= last);
                     count += 1;
-                    last_hit_first = interval.first;
+                    last_hit_id = interval.metadata;
                 } else {
                     misses += 1;
                 }

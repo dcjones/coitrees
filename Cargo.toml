@@ -13,7 +13,7 @@ license-file = "LICENSE.md"
 
 [profile.release]
 lto = true
-#debug = true
+debug = true
 
 [dependencies]
 num-traits = "0.2"
