@@ -7,8 +7,11 @@
 // use std::marker::Copy;
 // use std::convert::{TryInto, TryFrom};
 use std::fmt::Debug;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{Bound, BTreeMap, HashMap};
 use std::option::Option;
+
+extern crate num_traits;
+use num_traits::Bounded;
 // use std::ops::{AddAssign, SubAssign};
 
 // use std::arch::x86_64::{
@@ -210,16 +213,24 @@ impl SurplusTree where {
             if right_mps + left_surp < left_mps {
                 self.nodes[j].min_prefix_surplus = right_mps + left_surp;
             }
-        } else {
-            // leaf node, so min_prefix_surplus = surplus
-            self.nodes[j].min_prefix_surplus = self.nodes[j].surplus;
         }
-    }
+        // else {
+            // leaf node, so min_prefix_surplus = surplus
+            // if self.nodes[j].live_nodes > 0 {
+            //     self.nodes[j].min_prefix_surplus = self.nodes[j].surplus;
+            // } else {
+                // self.nodes[j].min_prefix_surplus = f64::INFINITY;
+            // }
+        }
+    // }
 
     // Called on nodes below the sweep line when they are also to the left of
     // the maximum sparse x query point (and thus no longer in S_i)
     fn set_node_dead(&mut self, i: usize) {
         let mut j = self.index_to_leaf[i];
+
+        // disregard any prefix that ends on this node
+        self.nodes[j].min_prefix_surplus = f64::INFINITY;
 
         loop {
             self.nodes[j].surplus += 1.0;
@@ -237,6 +248,9 @@ impl SurplusTree where {
     // Called on nodes when they fall below the sweep line
     fn set_node_useless(&mut self, i: usize) {
         let mut j = self.index_to_leaf[i];
+
+        // disregard any prefix that ends on this node
+        self.nodes[j].min_prefix_surplus = f64::INFINITY;
 
         loop {
             self.nodes[j].surplus -= self.sparsity;
@@ -443,15 +457,14 @@ impl<'a> Iterator for SurplusTreePrefixIterator<'a> {
 
 
 impl<I, T> COITree<I, T> {
-    pub fn new(mut intervals: Vec<Interval<I, T>>) -> COITree<I, T>
-            where I: Ord + Copy + Debug, T: Copy {
+    pub fn new(intervals: Vec<Interval<I, T>>) -> COITree<I, T>
+            where I: Bounded + Ord + Copy + Debug, T: Copy {
         return Self::with_sparsity(intervals, DEFAULT_SPARSITY);
     }
 
-    // TODO: had this naming. Why is the input called `nodes`? They aren't nodes.
-    // Should call it internals and name the other array something else.
+    // TODO: is intervals getting copied here? Should I be using a mutable ref?
     pub fn with_sparsity(mut intervals: Vec<Interval<I, T>>, sparsity: f64) -> COITree<I, T>
-            where I: Ord + Copy + Debug, T: Copy {
+            where I: Bounded + Ord + Copy + Debug, T: Copy {
         assert!(sparsity > 1.0);
 
         let n = intervals.len();
@@ -471,6 +484,8 @@ impl<I, T> COITree<I, T> {
         let mut metadata: Vec<T> = Vec::with_capacity(max_size);
         let mut index: BTreeMap<I, usize> = BTreeMap::new();
 
+        index.insert(I::min_value(), 0);
+
         intervals.sort_unstable_by_key(|i| i.last);
 
         let mut surplus_tree = SurplusTree::new(&intervals, sparsity);
@@ -487,6 +502,15 @@ impl<I, T> COITree<I, T> {
 
         let mut i = 0;
         while i < n && surplus_tree.num_live_nodes() > 0 {
+
+            // can't place a boundary between equal values, so consume
+            // everything that shares a value in one chunk
+            // if i + 1 < n && intervals[i].last ==  intervals[i+1].last {
+            //     surplus_tree.set_node_useless(i);
+            //     i += 1;
+            //     continue;
+            // }
+
             let max_end_opt = if n - i <= MIN_FINAL_SEQ_LEN {
                 i = n-1;
                 surplus_tree.last_live_leaf()
@@ -494,17 +518,27 @@ impl<I, T> COITree<I, T> {
                 surplus_tree.find_sparse_query_prefix()
             };
 
-            dbg!(surplus_tree.nodes[0].live_nodes);
-            dbg!(surplus_tree.nodes[0].min_prefix_surplus);
+            // dbg!(i);
+            // dbg!(surplus_tree.nodes[0].live_nodes);
+            // dbg!(surplus_tree.nodes[0].min_prefix_surplus);
 
             if let Some(max_end) = max_end_opt {
                 let boundary = intervals[i].last;
-                dbg!(boundary);
-                dbg!(max_end);
+                // dbg!(boundary);
+                // dbg!(intervals[surplus_tree.leaf_to_index[&max_end]].first);
+                // dbg!(max_end);
 
-                let boundary_idx = searchable_intervals.len();
+                // for node in &surplus_tree.nodes {
+                //     dbg!(node);
+                // }
+
+                let mut killed_count = 0;
+                let mut l_count = 0;
 
                 surplus_tree.map_prefix(max_end, |tree, idx| {
+                    // TODO: wait, this is only in L if interval.first <= our
+                    // max query.
+
                     let interval = &intervals[idx];
                     searchable_intervals.push(PlainInterval{
                         first: interval.first,
@@ -512,22 +546,42 @@ impl<I, T> COITree<I, T> {
                         metadata: ()
                     });
                     metadata.push(interval.metadata);
+                    l_count += 1;
 
                     if interval.last < boundary {
                         tree.set_node_dead(idx);
+                        killed_count += 1;
                     }
                 });
 
-                index.insert(boundary, boundary_idx);
-            } else {
-                surplus_tree.set_node_useless(i);
+                // dbg!((killed_count, l_count));
+
+                if !(i == n-1 || killed_count > l_count - killed_count) {
+                    dbg!(&searchable_intervals[searchable_intervals.len()-l_count..]);
+                }
+
+                assert!(i == n-1 || killed_count > l_count - killed_count);
+
+                if i < n-1 {
+                    index.insert(boundary, searchable_intervals.len());
+                }
             }
 
+            // eprintln!("useless: {:?}", intervals[i].last);
+            surplus_tree.set_node_useless(i);
             i += 1;
+
+            // make sure the next value in distinct, otherwise we can choose
+            // a boundary between equal values which can break things
+            while i < n && intervals[i].last == intervals[i-1].last {
+                surplus_tree.set_node_useless(i);
+                i += 1;
+            }
         }
 
-        dbg!(&searchable_intervals);
+        // dbg!(&searchable_intervals);
         dbg!(searchable_intervals.len());
+        // dbg!(&index);
         dbg!(index.len());
 
         // TODO: under this scheme we end copying metadata entries. That's bad
@@ -541,9 +595,43 @@ impl<I, T> COITree<I, T> {
         };
     }
 
-    pub fn query_count(&self, first: I, last: I) -> usize {
-        // TODO: implement this
-        //    lookup starting place in self.index, then scan in self.intervals
-        return 0;
+
+    fn find_search_start(&self, first: I) -> Option<usize> where I: Ord {
+        if let Some((_, i)) = self.index.range((Bound::Unbounded, Bound::Included(first))).next_back() {
+            return Some(*i);
+        } else {
+            return None;
+        }
+    }
+
+    pub fn query_count(&self, first: I, last: I) -> usize
+            where I: Bounded + Ord + Copy + Debug {
+
+        let mut count = 0;
+
+        // LAST is unused. WTF?
+
+        if let Some(search_start) = self.find_search_start(last) {
+            // dbg!((first, last, search_start));
+
+            let mut last_hit_first = I::min_value();
+            let mut misses = 0;
+            for interval in &self.intervals[search_start..] {
+                // dbg!(interval);
+                if interval.first > last {
+                    break;
+                } else if interval.last >= first && interval.first >= last_hit_first {
+                    debug_assert!(interval.first <= last);
+                    count += 1;
+                    last_hit_first = interval.first;
+                } else {
+                    misses += 1;
+                }
+            }
+
+            // println!("count, misses = {}, {}", count, misses);
+        }
+
+        return count;
     }
 }
