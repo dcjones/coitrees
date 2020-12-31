@@ -3,7 +3,6 @@
 //! `coitrees` implements a fast static interval tree data structure with genomic
 //! data in mind.
 //!
-//! 
 
 // use std::marker::Copy;
 // use std::convert::{TryInto, TryFrom};
@@ -100,6 +99,46 @@ pub struct SurplusTree {
 }
 
 
+// // Iterates over ancestors of a given nodes up to the root, along with
+// // each nodes immediate children
+// struct AncestorIterator<'a> {
+//     nodes: &'a mut Vec<SurplusTreeNode>,
+//     root: Option<usize>
+// }
+
+
+// impl<'a, 'b> Iterator for AncestorIterator<'a> {
+//     type Item = (&'b mut SurplusTreeNode, &'b SurplusTreeNode, &'b SurplusTreeNode);
+
+//     fn next(&mut self) -> Option<Self::Item> {
+//         if let Some(root) = self.root {
+//             if root == 0 {
+//                 self.root = None;
+//             } else {
+//                 self.root = Some((root-1)/2);
+//             }
+
+//             let left = 2*root+1;
+//             let right = 2*root+2;
+
+//             let ret: Self::Item = unsafe {
+//                 (
+//                     self.nodes.get_unchecked_mut(root),
+//                     self.nodes.get_unchecked(left),
+//                     self.nodes.get_unchecked(right)
+//                 )
+//             };
+
+//             return Some(ret);
+
+//         } else {
+//             return None;
+//         }
+//     }
+// }
+
+
+
 impl SurplusTree where {
     fn new<I, T>(intervals: &Vec<Interval<I, T>>, sparsity: f64) -> Self
             where I: Ord + Copy {
@@ -187,71 +226,78 @@ impl SurplusTree where {
         return self.nodes.len();
     }
 
-    fn has_sparse_prefix(&self) -> bool {
-        return self.nodes[0].surplus < 0.0;
-    }
 
-    // #[inline(always)]
-    fn update_min_prefix_surplus(&mut self, j: usize) {
-        let left = 2*j+1;
-        let right = 2*j+2;
-        let n = self.len();
-        debug_assert!((left < n) == (right < n));
+    // Climb up to the root from node `j`, setting each ancestors `min_prefix_surplus`
+    // and calling `visit` on each ancestor. This needs to be as fast as possible,
+    // so we do unsafe indexing.
+    fn update_ancestors<F>(&mut self, j: usize, mut visit: F)
+            where F: FnMut(&mut SurplusTreeNode) {
 
-        if left < n {
-            let left_mps = self.nodes[left].min_prefix_surplus;
-            let left_surp = self.nodes[left].surplus;
-            self.nodes[j].min_prefix_surplus = left_mps;
+        assert!(j < self.nodes.len());
+        let mut root = j;
+        while root > 0 {
+            root = (root-1)/2;
 
-            let right_mps = self.nodes[right].min_prefix_surplus;
-            if right_mps + left_surp < left_mps {
-                self.nodes[j].min_prefix_surplus = right_mps + left_surp;
-            }
+            let left = 2*root+1;
+            let right = 2*root+2;
+
+            let (left_min_prefix_surplus, left_surplus) = {
+                let node_left = unsafe { self.nodes.get_unchecked(left) };
+                (node_left.min_prefix_surplus, node_left.surplus)
+            };
+
+            let right_min_prefix_surplus = {
+                let node_right = unsafe { self.nodes.get_unchecked(right) };
+                node_right.min_prefix_surplus
+            };
+
+            let node_root = unsafe { self.nodes.get_unchecked_mut(root) };
+
+            // node_root.min_prefix_surplus = left_min_prefix_surplus.min(
+            //     left_surplus + right_min_prefix_surplus);
+
+            let l = left_min_prefix_surplus;
+            let r = left_surplus + right_min_prefix_surplus;
+            node_root.min_prefix_surplus = if l < r { l } else { r };
+
+            visit(node_root);
         }
     }
 
     // Called on nodes below the sweep line when they are also to the left of
     // the maximum sparse x query point (and thus no longer in S_i)
     fn set_node_dead(&mut self, i: usize) {
-        let mut j = self.index_to_leaf[i];
+        let j = self.index_to_leaf[i];
 
-        // disregard any prefix that ends on this node
-        self.nodes[j].min_prefix_surplus = f64::INFINITY;
+        {
+            let node = &mut self.nodes[j];
+            // disregard any prefix that ends on this node
+            node.min_prefix_surplus = f64::INFINITY;
+            node.surplus += 1.0;
+            node.live_nodes -= 1;
 
-        loop {
-            self.nodes[j].surplus += 1.0;
-            self.nodes[j].live_nodes -= 1;
-            self.update_min_prefix_surplus(j);
-
-            if j > 0 {
-                j = (j-1)/2; // parent node
-            } else {
-                break;
-            }
         }
+        self.update_ancestors(j, |node| {
+            node.surplus += 1.0;
+            node.live_nodes -= 1;
+        });
     }
-
-    // TODO: This is another big initialization bottleneck. I think the only
-    // hope is to avoid bounds checking wherever possible, possibly even
-    // resorting to unsafe block.
 
     // Called on nodes when they fall below the sweep line
     fn set_node_useless(&mut self, i: usize) {
-        let mut j = self.index_to_leaf[i];
+        let j = self.index_to_leaf[i];
 
-        // disregard any prefix that ends on this node
-        self.nodes[j].min_prefix_surplus = f64::INFINITY;
-
-        loop {
-            self.nodes[j].surplus -= self.sparsity;
-            self.update_min_prefix_surplus(j);
-
-            if j > 0 {
-                j = (j-1)/2; // parent node
-            } else {
-                break;
-            }
+        {
+            let node = &mut self.nodes[j];
+            // disregard any prefix that ends on this node
+            node.min_prefix_surplus = f64::INFINITY;
+            node.surplus -= self.sparsity;
         }
+
+        let sparsity = self.sparsity;
+        self.update_ancestors(j, |node| {
+            node.surplus -= sparsity;
+        });
     }
 
 
@@ -546,9 +592,8 @@ impl<I, T> COITree<I, T> {
             for interval in &self.intervals[search_start..] {
                 if interval.first > last {
                     break;
-
                 } else if interval.last >= first && interval.metadata > last_hit_id {
-                    assert!(interval.first <= last);
+                    debug_assert!(interval.first <= last);
                     count += 1;
                     last_hit_id = interval.metadata;
                 }
