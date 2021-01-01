@@ -64,7 +64,15 @@ pub struct SurplusTreeNode {
     min_prefix_surplus: f64,
 
     // number of leaf nodes in the subtree not marked as dead
-    live_nodes: usize
+    live_nodes: usize,
+
+    // if this is a leaf node, the corresponding index into the intervals array
+    // otherwise usize::MAX
+    intervals_index: usize,
+
+    // if this is is a leaf node, a running count of prior leaf nodes thats
+    // used to avoid double counting intersections. If not a leaf node, u32::MAX
+    leaf_count: u32,
 }
 
 
@@ -74,6 +82,8 @@ impl Default for SurplusTreeNode {
             surplus: f64::NAN,
             min_prefix_surplus: f64::NAN,
             live_nodes: 0,
+            intervals_index: usize::MAX,
+            leaf_count: u32::MAX,
         };
     }
 }
@@ -88,12 +98,6 @@ pub struct SurplusTree {
 
     // these are stored in binary heap order
     nodes: Vec<SurplusTreeNode>,
-
-    // map (x-sorted) leaf index to the corresponding (y-sorted) index in the
-    // `intervals` vector, along with its leaf number. We additionally delete
-    // points when they become dead to facilitate enumerating L_i
-    // leaf_to_index: HashMap<usize, (usize, u32)>,
-    leaf_to_index: Vec<(usize, u32)>,
 
     // reverse direction: map node index to leaf node index
     index_to_leaf: Vec<usize>,
@@ -210,34 +214,16 @@ impl SurplusTree where {
         // permutation that puts (y-sorted) nodes in x-sorted order.
         let now = Instant::now();
         let mut xperm: Vec<usize> = (0..n).collect();
-        xperm.sort_unstable_by_key(|i| intervals[*i].first);
+        xperm.sort_by_key(|i| intervals[*i].first);
         eprintln!("second sort: {}", now.elapsed().as_millis() as f64 / 1000.0);
-        // xperm.sort_unstable_by_key(|i| unsafe { intervals.get_unchecked(*i) }.first);
 
         let now = Instant::now();
         let num_nodes = 2*n-1;
         let mut nodes = vec![SurplusTreeNode::default(); num_nodes];
-        let mut leaf_to_index: Vec<(usize, u32)> = vec![(usize::MAX, u32::MAX); num_nodes];
-        let mut index_to_leaf: Vec<usize> = vec![usize::MAX; n];
+        let mut index_to_leaf: Vec<usize> = vec![usize::default(); n];
         eprintln!("surplus tree allocate: {}", now.elapsed().as_millis() as f64 / 1000.0);
 
         // go up the tree setting internal node values
-
-        // this version won't work because we have to borrow multiple times
-        // for (i_rev, node) in nodes.iter_mut().rev().enumerate() {
-        //     let i = num_nodes - i_rev - 1;
-        //     let left = 2*i+1;
-        //     let right = 2*i+2;
-        //     if left < num_nodes {
-        //         node.live_nodes = nodes[left].live_nodes + nodes[right].live_nodes;
-        //     } else {
-        //         node.live_nodes = 1;
-        //     }
-
-        //     node.min_prefix_surplus = sparsity - 1.0;
-        //     node.surplus = (sparsity - 1.0) * node.live_nodes as f64;
-        // }
-
         let now = Instant::now();
         let mut i = nodes.len() - 1;
         loop {
@@ -262,14 +248,14 @@ impl SurplusTree where {
         }
         eprintln!("init surplus tree 1: {}", now.elapsed().as_millis() as f64 / 1000.0);
 
-        // iterate through leaves, building `leaf_to_index`, and initializing
-        // leaf node values
+        // iterate through leaves, initializing leaf node values
         let now = Instant::now();
         let mut i = 0;
         let mut leaf_count = 0;
         while let Some(j) = next_live_leaf(&nodes, i) {
             let idx = xperm[leaf_count];
-            leaf_to_index[j] = (idx, leaf_count as u32 + 1);
+            nodes[j].intervals_index = idx;
+            nodes[j].leaf_count = leaf_count as u32 + 1;
             leaf_count += 1;
             i = j;
         }
@@ -277,17 +263,16 @@ impl SurplusTree where {
 
         // reverse the map
         let now = Instant::now();
-        for (k, (v, _)) in leaf_to_index.iter().enumerate() {
-            if *v != usize::MAX {
-                index_to_leaf[*v] = k;
+        for (i, node) in nodes.iter().enumerate() {
+            if node.intervals_index != usize::MAX {
+                index_to_leaf[node.intervals_index] = i;
             }
         }
-        eprintln!("init index_to_leaf: {}", now.elapsed().as_millis() as f64 / 1000.0);
+        eprintln!("init reverse index: {}", now.elapsed().as_millis() as f64 / 1000.0);
 
         return Self {
             sparsity: sparsity,
             nodes: nodes,
-            leaf_to_index: leaf_to_index,
             index_to_leaf: index_to_leaf,
         };
     }
@@ -408,8 +393,9 @@ impl SurplusTree where {
         let mut i = 0;
         loop {
             if let Some(j) = next_live_leaf(&self.nodes, i) {
-                let idx = self.leaf_to_index[j];
-                visit(self, idx.0, idx.1);
+                let idx = self.nodes[j].intervals_index;
+                let leaf_count = self.nodes[j].leaf_count;
+                visit(self, idx, leaf_count);
                 if j == end_idx {
                     break;
                 }
@@ -504,7 +490,7 @@ impl<I, T> COITree<I, T> {
         index.insert(I::min_value(), 0);
 
         let now = Instant::now();
-        intervals.sort_unstable_by_key(|i| (i.last, i.first));
+        intervals.sort_unstable_by_key(|i| i.last);
         eprintln!("first sort: {}", now.elapsed().as_millis() as f64 / 1000.0);
 
         let now = Instant::now();
