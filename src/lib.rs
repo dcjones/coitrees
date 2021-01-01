@@ -7,7 +7,7 @@
 // use std::marker::Copy;
 // use std::convert::{TryInto, TryFrom};
 use std::fmt::Debug;
-use std::collections::{Bound, BTreeMap, HashMap};
+use std::collections::{Bound, BTreeMap};
 use std::option::Option;
 use std::time::Instant;
 
@@ -21,7 +21,8 @@ use num_traits::Bounded;
 // };
 
 
-const DEFAULT_SPARSITY: f64 = 10.0;
+const DEFAULT_SPARSITY: f64 = 4.0;
+// const DEFAULT_SPARSITY: f64 = 1.5;
 const MIN_FINAL_SEQ_LEN: usize = 16;
 
 
@@ -33,8 +34,6 @@ pub struct Interval<I, T> {
     pub last: I,
     pub metadata: T
 }
-
-type PlainInterval<I> = Interval<I, ()>;
 
 
 /// COITree data structure. A representation of a static set of intervals with
@@ -93,7 +92,8 @@ pub struct SurplusTree {
     // map (x-sorted) leaf index to the corresponding (y-sorted) index in the
     // `intervals` vector, along with its leaf number. We additionally delete
     // points when they become dead to facilitate enumerating L_i
-    leaf_to_index: HashMap<usize, (usize, u32)>,
+    // leaf_to_index: HashMap<usize, (usize, u32)>,
+    leaf_to_index: Vec<(usize, u32)>,
 
     // reverse direction: map node index to leaf node index
     index_to_leaf: Vec<usize>,
@@ -208,16 +208,18 @@ impl SurplusTree where {
         let n = intervals.len();
 
         // permutation that puts (y-sorted) nodes in x-sorted order.
+        let now = Instant::now();
         let mut xperm: Vec<usize> = (0..n).collect();
-
-        // OPT: most expensive part of this function
         xperm.sort_unstable_by_key(|i| intervals[*i].first);
+        eprintln!("second sort: {}", now.elapsed().as_millis() as f64 / 1000.0);
         // xperm.sort_unstable_by_key(|i| unsafe { intervals.get_unchecked(*i) }.first);
 
+        let now = Instant::now();
         let num_nodes = 2*n-1;
         let mut nodes = vec![SurplusTreeNode::default(); num_nodes];
-        let mut leaf_to_index: HashMap<usize, (usize, u32)> = HashMap::with_capacity(n);
+        let mut leaf_to_index: Vec<(usize, u32)> = vec![(usize::MAX, u32::MAX); num_nodes];
         let mut index_to_leaf: Vec<usize> = vec![usize::MAX; n];
+        eprintln!("surplus tree allocate: {}", now.elapsed().as_millis() as f64 / 1000.0);
 
         // go up the tree setting internal node values
 
@@ -236,6 +238,7 @@ impl SurplusTree where {
         //     node.surplus = (sparsity - 1.0) * node.live_nodes as f64;
         // }
 
+        let now = Instant::now();
         let mut i = nodes.len() - 1;
         loop {
             let left = 2*i+1;
@@ -257,25 +260,29 @@ impl SurplusTree where {
                 i -= 1;
             }
         }
+        eprintln!("init surplus tree 1: {}", now.elapsed().as_millis() as f64 / 1000.0);
 
         // iterate through leaves, building `leaf_to_index`, and initializing
         // leaf node values
+        let now = Instant::now();
         let mut i = 0;
         let mut leaf_count = 0;
         while let Some(j) = next_live_leaf(&nodes, i) {
             let idx = xperm[leaf_count];
-
-            // OPT: second most expensive part of this function
-            leaf_to_index.insert(j, (idx, leaf_count as u32 + 1));
+            leaf_to_index[j] = (idx, leaf_count as u32 + 1);
             leaf_count += 1;
             i = j;
         }
-        assert!(leaf_to_index.len() == n);
+        eprintln!("init surplus tree 2: {}", now.elapsed().as_millis() as f64 / 1000.0);
 
         // reverse the map
-        for (k, (v, _)) in &leaf_to_index {
-            index_to_leaf[*v] = *k;
+        let now = Instant::now();
+        for (k, (v, _)) in leaf_to_index.iter().enumerate() {
+            if *v != usize::MAX {
+                index_to_leaf[*v] = k;
+            }
         }
+        eprintln!("init index_to_leaf: {}", now.elapsed().as_millis() as f64 / 1000.0);
 
         return Self {
             sparsity: sparsity,
@@ -401,7 +408,7 @@ impl SurplusTree where {
         let mut i = 0;
         loop {
             if let Some(j) = next_live_leaf(&self.nodes, i) {
-                let idx = self.leaf_to_index[&j];
+                let idx = self.leaf_to_index[j];
                 visit(self, idx.0, idx.1);
                 if j == end_idx {
                     break;
@@ -496,7 +503,9 @@ impl<I, T> COITree<I, T> {
 
         index.insert(I::min_value(), 0);
 
-        intervals.sort_unstable_by_key(|i| i.last);
+        let now = Instant::now();
+        intervals.sort_unstable_by_key(|i| (i.last, i.first));
+        eprintln!("first sort: {}", now.elapsed().as_millis() as f64 / 1000.0);
 
         let now = Instant::now();
         let mut surplus_tree = SurplusTree::new(&intervals, sparsity);
@@ -559,7 +568,7 @@ impl<I, T> COITree<I, T> {
                 i += 1;
             }
         }
-        eprintln!("SurplusTree::new: {}", now.elapsed().as_millis() as f64 / 1000.0);
+        eprintln!("main construction loop: {}", now.elapsed().as_millis() as f64 / 1000.0);
 
         dbg!(searchable_intervals.len());
         dbg!(index.len());
@@ -585,10 +594,12 @@ impl<I, T> COITree<I, T> {
         }
     }
 
+    // TODO: disabling inlining here to make profiling easier
+    #[inline(never)]
     pub fn query_count(&self, first: I, last: I) -> usize
             where I: Bounded + Ord + Copy + Debug {
 
-        // let mut misses = 0;
+        let mut misses = 0;
         let mut count = 0;
         if let Some(search_start) = self.find_search_start(first) {
             let mut last_hit_id: u32 = 0;
@@ -599,10 +610,11 @@ impl<I, T> COITree<I, T> {
                     // debug_assert!(interval.first <= last);
                     count += 1;
                     last_hit_id = interval.metadata;
+                    // eprintln!("hit: ({:?}, {:?})", interval.first, interval.last);
+                } else {
+                    // eprintln!("miss: ({:?}, {:?})", interval.first, interval.last);
+                    misses += 1;
                 }
-                // } else {
-                    // misses += 1;
-                // }
             }
         }
 
