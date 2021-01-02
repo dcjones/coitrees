@@ -10,7 +10,6 @@ use std::fmt::Debug;
 use std::collections::{Bound, BTreeMap};
 use std::option::Option;
 use std::time::Instant;
-use std::cmp::{min, max};
 
 extern crate num_traits;
 use num_traits::Bounded;
@@ -22,7 +21,7 @@ use num_traits::Bounded;
 // };
 
 
-const DEFAULT_SPARSITY: f64 = 10.0;
+const DEFAULT_SPARSITY: f64 = 4.0;
 // const DEFAULT_SPARSITY: f64 = 1.5;
 const MIN_FINAL_SEQ_LEN: usize = 16;
 
@@ -55,7 +54,7 @@ pub struct COITree<I, T> {
 
 
 #[derive(Copy, Clone, Debug)]
-pub struct SurplusTreeNode<I> {
+pub struct SurplusTreeNode {
     // how many more points could lie below the y boundary before
     // the query region represented by this tree becomes sparse
     surplus: f64,
@@ -74,21 +73,17 @@ pub struct SurplusTreeNode<I> {
     // if this is is a leaf node, a running count of prior leaf nodes thats
     // used to avoid double counting intersections. If not a leaf node, u32::MAX
     leaf_count: u32,
-
-    // Smallest first (x) value among all useful points
-    min_useful_first: I,
 }
 
 
-impl<I> Default for SurplusTreeNode<I> where I: Bounded + Default {
+impl Default for SurplusTreeNode {
     fn default() -> Self {
-        return Self {
+        return SurplusTreeNode {
             surplus: f64::NAN,
             min_prefix_surplus: f64::NAN,
             live_nodes: 0,
             intervals_index: usize::MAX,
             leaf_count: u32::MAX,
-            min_useful_first: I::max_value(),
         };
     }
 }
@@ -98,11 +93,11 @@ impl<I> Default for SurplusTreeNode<I> where I: Bounded + Default {
 /// "surplus" of each prefix which let's us find for the current y boundary
 /// whether there are any sparse queries and where the maximum x value is
 /// for that query.
-pub struct SurplusTree<I> {
+pub struct SurplusTree {
     sparsity: f64,
 
     // these are stored in binary heap order
-    nodes: Vec<SurplusTreeNode<I>>,
+    nodes: Vec<SurplusTreeNode>,
 
     // reverse direction: map node index to leaf node index
     index_to_leaf: Vec<usize>,
@@ -148,7 +143,7 @@ pub struct SurplusTree<I> {
 // }
 
 // Function for traversing from one leaf node index to the next.
-fn next_live_leaf<I>(nodes: &Vec<SurplusTreeNode<I>>, mut i: usize) -> Option<usize> {
+fn next_live_leaf(nodes: &Vec<SurplusTreeNode>, mut i: usize) -> Option<usize> {
     let num_nodes = nodes.len();
 
     let mut left = 2*i+1;
@@ -211,8 +206,9 @@ fn next_live_leaf<I>(nodes: &Vec<SurplusTreeNode<I>>, mut i: usize) -> Option<us
 }
 
 
-impl<I> SurplusTree<I> where I: Bounded + Copy + Debug + Default + Ord {
-    fn new<T>(intervals: &Vec<Interval<I, T>>, sparsity: f64) -> Self {
+impl SurplusTree where {
+    fn new<I, T>(intervals: &Vec<Interval<I, T>>, sparsity: f64) -> Self
+            where I: Ord + Copy {
         let n = intervals.len();
 
         // permutation that puts (y-sorted) nodes in x-sorted order.
@@ -258,27 +254,12 @@ impl<I> SurplusTree<I> where I: Bounded + Copy + Debug + Default + Ord {
         let mut leaf_count = 0;
         while let Some(j) = next_live_leaf(&nodes, i) {
             let idx = xperm[leaf_count];
-            nodes[j].min_useful_first = intervals[idx].first;
             nodes[j].intervals_index = idx;
             nodes[j].leaf_count = leaf_count as u32 + 1;
             leaf_count += 1;
             i = j;
         }
-        dbg!(leaf_count);
         eprintln!("init surplus tree 2: {}", now.elapsed().as_millis() as f64 / 1000.0);
-
-        // set min_useful_first for internal nodes
-        for i in (0..num_nodes).rev() {
-            let left = 2*i+1;
-            let right = 2*i+2;
-            if left < num_nodes {
-                nodes[i].min_useful_first = min(
-                    nodes[left].min_useful_first,
-                    nodes[right].min_useful_first);
-            }
-
-            assert!(nodes[i].min_useful_first < I::max_value());
-        }
 
         // reverse the map
         let now = Instant::now();
@@ -301,16 +282,11 @@ impl<I> SurplusTree<I> where I: Bounded + Copy + Debug + Default + Ord {
     }
 
 
-    fn min_useful_first(&self) -> I {
-        return self.nodes[0].min_useful_first;
-    }
-
-
     // Climb up to the root from node `j`, setting each ancestors `min_prefix_surplus`
     // and calling `visit` on each ancestor. This needs to be as fast as possible,
     // so we do unsafe indexing.
     fn update_ancestors<F>(&mut self, j: usize, mut visit: F)
-            where F: FnMut(&mut SurplusTreeNode<I>) {
+            where F: FnMut(&mut SurplusTreeNode) {
 
         assert!(j < self.nodes.len());
         let mut root = j;
@@ -320,27 +296,24 @@ impl<I> SurplusTree<I> where I: Bounded + Copy + Debug + Default + Ord {
             let left = 2*root+1;
             let right = 2*root+2;
 
-            let (left_min_prefix_surplus, left_surplus, left_min_useful_first) = {
+            let (left_min_prefix_surplus, left_surplus) = {
                 let node_left = unsafe { self.nodes.get_unchecked(left) };
-                (node_left.min_prefix_surplus, node_left.surplus, node_left.min_useful_first)
+                (node_left.min_prefix_surplus, node_left.surplus)
             };
 
-            let (right_min_prefix_surplus, right_min_useful_first) = {
+            let right_min_prefix_surplus = {
                 let node_right = unsafe { self.nodes.get_unchecked(right) };
-                (node_right.min_prefix_surplus, node_right.min_useful_first)
+                node_right.min_prefix_surplus
             };
 
             let node_root = unsafe { self.nodes.get_unchecked_mut(root) };
 
+            // node_root.min_prefix_surplus = left_min_prefix_surplus.min(
+            //     left_surplus + right_min_prefix_surplus);
+
             let l = left_min_prefix_surplus;
             let r = left_surplus + right_min_prefix_surplus;
             node_root.min_prefix_surplus = if l < r { l } else { r };
-
-            // dbg!((root, left_min_useful_first, right_min_useful_first));
-
-            // OPT: This isn't necessary when marking dead points
-            node_root.min_useful_first = min(
-                left_min_useful_first, right_min_useful_first);
 
             visit(node_root);
         }
@@ -374,7 +347,6 @@ impl<I> SurplusTree<I> where I: Bounded + Copy + Debug + Default + Ord {
             // disregard any prefix that ends on this node
             node.min_prefix_surplus = f64::INFINITY;
             node.surplus -= self.sparsity;
-            node.min_useful_first = I::max_value();
         }
 
         let sparsity = self.sparsity;
@@ -487,15 +459,15 @@ impl<I> SurplusTree<I> where I: Bounded + Copy + Debug + Default + Ord {
 }
 
 
-impl<I, T> COITree<I, T>
-        where I: Bounded + Copy + Default + Ord + Debug,
-              T: Copy {
-    pub fn new(intervals: Vec<Interval<I, T>>) -> COITree<I, T> {
+impl<I, T> COITree<I, T> {
+    pub fn new(intervals: Vec<Interval<I, T>>) -> COITree<I, T>
+            where I: Bounded + Ord + Copy + Debug, T: Copy {
         return Self::with_sparsity(intervals, DEFAULT_SPARSITY);
     }
 
     // TODO: is intervals getting copied here? Should I be using a mutable ref?
-    pub fn with_sparsity(mut intervals: Vec<Interval<I, T>>, sparsity: f64) -> COITree<I, T> {
+    pub fn with_sparsity(mut intervals: Vec<Interval<I, T>>, sparsity: f64) -> COITree<I, T>
+            where I: Bounded + Ord + Copy + Debug, T: Copy {
         assert!(sparsity > 1.0);
 
         let n = intervals.len();
@@ -525,47 +497,17 @@ impl<I, T> COITree<I, T>
         let mut surplus_tree = SurplusTree::new(&intervals, sparsity);
         eprintln!("SurplusTree::new: {}", now.elapsed().as_millis() as f64 / 1000.0);
 
-        let mut useless_count = 0;
-        let mut max_useless_first = I::min_value();
+        // searchable intervals stores an extra integer to disambiguate and
+        // avoid counting the same hits more than once.
+
+        // TODO: NO THIS DOESN'T DISAMBIGUATE AT ALL
+        // We need to assign these ids to leaves in the surplus tree
+        // Ok, where do we assign them then?
+        // Can `map_prefix` keep track of the leaf number?
 
         let now = Instant::now();
         let mut i = 0;
         while i < n && surplus_tree.num_live_nodes() > 0 {
-            // eprintln!("USELESS: {} {:?}, {:?}", useless_count, max_useless_first, surplus_tree.nodes[0].min_useful_first);
-            if max_useless_first <= surplus_tree.min_useful_first() && useless_count > 0 {
-                let boundary = intervals[i].last;
-                // dbg!(boundary);
-                // eprintln!("dumping {} useless points", useless_count);
-
-                // i-1 should be the last interval to fall below the boundary
-                let max_end = surplus_tree.index_to_leaf[i];
-
-                // TODO: Are we sure this should purge all useless points?
-
-                surplus_tree.map_prefix(max_end, |tree, idx, leaf_num| {
-                    let interval = &intervals[idx];
-                    if interval.last < boundary {
-                        assert!(interval.last < boundary);
-                        searchable_intervals.push(Interval{
-                            first: interval.first,
-                            last: interval.last,
-                            metadata: leaf_num,
-                        });
-
-                        metadata.push(interval.metadata);
-
-                        tree.set_node_dead(idx);
-                        useless_count -= 1;
-                    }
-                });
-
-                // dbg!(max_useless_first);
-                // dbg!(surplus_tree.num_live_nodes());
-                // eprintln!("post useless_count = {}", useless_count);
-                assert!(useless_count == 0);
-                index.insert(boundary, searchable_intervals.len());
-                continue;
-            }
 
             let max_end_opt = if n - i <= MIN_FINAL_SEQ_LEN {
                 i = n-1;
@@ -575,82 +517,25 @@ impl<I, T> COITree<I, T>
             };
 
             if let Some(max_end) = max_end_opt {
-                // eprintln!("OUTPUTING Li");
                 let boundary = intervals[i].last;
 
                 let mut killed_count = 0;
                 let mut l_count = 0;
 
-                // TODO: We can skip pushing intervals above the boundary
-                // when the x-values of everything below the boundary
-                // is <= the x-values of everything above the boundary.
-
-                // I think we are on to something. With this scheme we are
-                // oppourtunistically dropping suffixes. What we want to do though
-                // is dump prefixes whenever we can, even if there isn't a strictly
-                // sparse query.
-                //
-                // So we need some kind of scheme to keep track of the maximum
-                // x value among useless points, and the minimum x value among
-                // useful points.
-                //
-                // This runs the risk of making the index too dense though,
-                // which also be counterproductive.
-                //
-                // I guess what we want is to dump any prefix that's separable
-                // from its suffix and above some size, to avoid just indexing
-                // every single value, which would be suboptimal.
-
-
-                // So how do we keep track? Every time we mark a node as useless
-                // update the maximum useless x. Also keep track of the number
-                // of useless nodes. Easy.
-
-                // How de we determine the minimum x value among useful nodes?
-                // I think we have to use the SurplusTree to do this. Each node
-                // can keep track of the minimum x value among useful points
-                // in its subtree. When we mark a node as useless, we climb up
-                // the tree updating these.
-                //
-                // Expensive, and involves more tree climbing, but I think that's
-                // the only way.
-
-                // TODO: Another possible consequence of this scheme is that we
-                // could mark entire subtrees as dead in one go.
-
-                let mut max_prefix_first = I::min_value();
-                let mut min_suffice_first = I::max_value();
                 surplus_tree.map_prefix(max_end, |tree, idx, leaf_num| {
                     let interval = &intervals[idx];
+                    searchable_intervals.push(Interval{
+                        first: interval.first,
+                        last: interval.last,
+                        metadata: leaf_num,
+                    });
+
+                    metadata.push(interval.metadata);
+                    l_count += 1;
+
                     if interval.last < boundary {
-                        max_prefix_first = max(max_prefix_first, interval.first);
-                    } else {
-                        min_suffice_first = min(min_suffice_first, interval.first);
-                    }
-                });
-                // dbg!((max_prefix_first, min_suffice_first));
-                let supress_suffix = i < n - 1 && max_prefix_first <= min_suffice_first;
-                // dbg!(max_prefix_first <= min_suffice_first);
-                // dbg!(boundary);
-                // dbg!(supress_suffix);
-
-                surplus_tree.map_prefix(max_end, |tree, idx, leaf_num| {
-                    let interval = &intervals[idx];
-                    if interval.last < boundary || !supress_suffix {
-                        searchable_intervals.push(Interval{
-                            first: interval.first,
-                            last: interval.last,
-                            metadata: leaf_num,
-                        });
-
-                        metadata.push(interval.metadata);
-                        l_count += 1;
-
-                        if interval.last < boundary {
-                            tree.set_node_dead(idx);
-                            useless_count -= 1;
-                            killed_count += 1;
-                        }
+                        tree.set_node_dead(idx);
+                        killed_count += 1;
                     }
                 });
 
@@ -659,29 +544,20 @@ impl<I, T> COITree<I, T>
                 }
             }
 
-            // mark this interval and all following intervals that share
-            // a last value as useless.
-            loop {
-                surplus_tree.set_node_useless(i);
-                useless_count += 1;
-                max_useless_first = max(max_useless_first, intervals[i].first);
-                i += 1;
+            surplus_tree.set_node_useless(i);
+            i += 1;
 
-                if i >= n || intervals[i].last != intervals[i-1].last {
-                    break;
-                }
+            // make sure the next value in distinct, otherwise we can choose
+            // a boundary between equal values which can break things
+            while i < n && intervals[i].last == intervals[i-1].last {
+                surplus_tree.set_node_useless(i);
+                i += 1;
             }
         }
         eprintln!("main construction loop: {}", now.elapsed().as_millis() as f64 / 1000.0);
 
         dbg!(searchable_intervals.len());
         dbg!(index.len());
-
-        let index_density = index.len() as f64 /  searchable_intervals.len() as f64;
-        dbg!(index_density);
-
-        // dbg!(&searchable_intervals);
-        // dbg!(&index);
 
         // TODO: under this scheme we end copying metadata entries. That's bad
         // if metadata is large. We could consider adding an index to intervals
@@ -709,9 +585,7 @@ impl<I, T> COITree<I, T>
     pub fn query_count(&self, first: I, last: I) -> usize
             where I: Bounded + Ord + Copy + Debug {
 
-        // eprintln!("query: ({:?}, {:?})", first, last);
-        let mut misses1 = 0;
-        let mut misses2 = 0;
+        let mut misses = 0;
         let mut count = 0;
         if let Some(search_start) = self.find_search_start(first) {
             let mut last_hit_id: u32 = 0;
@@ -724,24 +598,13 @@ impl<I, T> COITree<I, T>
                     last_hit_id = interval.metadata;
                     // eprintln!("hit: ({:?}, {:?})", interval.first, interval.last);
                 } else {
-                    if interval.metadata > last_hit_id {
-                        // eprintln!("type 1 miss: ({:?}, {:?})", interval.first, interval.last);
-                        misses1 += 1;
-                    } else {
-                        // eprintln!("type 2 miss: ({:?}, {:?})", interval.first, interval.last);
-                        misses2 += 1;
-                    }
+                    // eprintln!("miss: ({:?}, {:?})", interval.first, interval.last);
+                    misses += 1;
                 }
             }
         }
 
-        // let hit_prop = count as f64 / (count + misses1 + misses2) as f64;
-        // if hit_prop < 0.5 {
-        //     eprintln!("query: ({:?}, {:?})", first, last);
-            // println!("misses: {}, {}",
-            //     misses1 as f64 / (count + misses1 + misses2) as f64,
-            //     misses2 as f64 / (count + misses1 + misses2) as f64);
-        // }
+        // eprintln!("hit prop: {}", count as f64 / (count + misses) as f64);
 
         return count;
     }
