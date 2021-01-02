@@ -160,6 +160,8 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
 
     let mut total_count: usize = 0;
     let now = Instant::now();
+    let mut total_misses: usize = 0;
+    let mut max_misses: usize = 0;
 
     // let stdout = io::stdout();
     // let mut out = stdout.lock();
@@ -172,7 +174,14 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
 
         if let Some(seqname_tree) = tree.get(seqname) {
             // seqname_tree.query(first, last, |_| count += 1);
-            count = seqname_tree.query_count(first, last);
+            let (query_count, query_misses) = seqname_tree.query_count(first, last);
+            count = query_count;
+            if query_misses > max_misses {
+                eprintln!("max misses: {}, {}", query_count, query_misses);
+                eprintln!("query: {}, {}, {}", seqname, first, last);
+                max_misses = query_misses;
+            }
+            total_misses += query_misses;
         }
 
         // out.write(&line[..line.len()-1])?;
@@ -195,6 +204,7 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
 
     eprintln!("overlap: {}s", now.elapsed().as_millis() as f64 / 1000.0);
     eprintln!("total overlaps: {}", total_count);
+    eprintln!("total misses: {}", total_misses);
 
     return Ok(());
 }

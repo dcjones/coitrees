@@ -10,6 +10,7 @@ use std::fmt::Debug;
 use std::collections::{Bound, BTreeMap};
 use std::option::Option;
 use std::time::Instant;
+use std::cmp::{min, max};
 
 extern crate num_traits;
 use num_traits::Bounded;
@@ -21,7 +22,8 @@ use num_traits::Bounded;
 // };
 
 
-const DEFAULT_SPARSITY: f64 = 4.0;
+const DEFAULT_SPARSITY: f64 = 10.0;
+// const DEFAULT_SPARSITY: f64 = 2.0;
 // const DEFAULT_SPARSITY: f64 = 1.5;
 const MIN_FINAL_SEQ_LEN: usize = 16;
 
@@ -556,6 +558,8 @@ impl<I, T> COITree<I, T> {
         }
         eprintln!("main construction loop: {}", now.elapsed().as_millis() as f64 / 1000.0);
 
+        // dbg!(&index);
+
         dbg!(searchable_intervals.len());
         dbg!(index.len());
 
@@ -582,30 +586,42 @@ impl<I, T> COITree<I, T> {
 
     // TODO: disabling inlining here to make profiling easier
     #[inline(never)]
-    pub fn query_count(&self, first: I, last: I) -> usize
+    pub fn query_count(&self, first: I, last: I) -> (usize, usize)
             where I: Bounded + Ord + Copy + Debug {
 
-        let mut misses = 0;
+        // let mut misses = 0;
         let mut count = 0;
+        let mut misses = 0;
         if let Some(search_start) = self.find_search_start(first) {
             let mut last_hit_id: u32 = 0;
             for interval in &self.intervals[search_start..] {
                 if interval.first > last {
                     break;
-                } else if interval.last >= first && interval.metadata > last_hit_id {
-                    // debug_assert!(interval.first <= last);
+                }
+                // count += (interval.last >= first && interval.metadata > last_hit_id) as usize;
+
+                if interval.last >= first && interval.metadata > last_hit_id {
+                    // println!("hit: {:?} {:?} {}", interval.first, interval.last, interval.metadata);
                     count += 1;
-                    last_hit_id = interval.metadata;
-                    // eprintln!("hit: ({:?}, {:?})", interval.first, interval.last);
                 } else {
-                    // eprintln!("miss: ({:?}, {:?})", interval.first, interval.last);
+                    // println!("miss: {:?} {:?} {}", interval.first, interval.last, interval.metadata);
                     misses += 1;
                 }
+
+                // } else if interval.last >= first && interval.metadata > last_hit_id {
+                //     // debug_assert!(interval.first <= last);
+                //     count += 1;
+                //     // eprintln!("hit: ({:?}, {:?})", interval.first, interval.last);
+                // } else {
+                //     // eprintln!("miss: ({:?}, {:?})", interval.first, interval.last);
+                //     misses += 1;
+                // }
+                last_hit_id = max(last_hit_id, interval.metadata);
             }
         }
 
         // eprintln!("hit prop: {}", count as f64 / (count + misses) as f64);
 
-        return count;
+        return (count, misses);
     }
 }
