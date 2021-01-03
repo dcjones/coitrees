@@ -11,15 +11,23 @@ use std::collections::{Bound, BTreeMap};
 use std::option::Option;
 use std::time::Instant;
 use std::cmp::{min, max};
+use std::mem::transmute;
 
 extern crate num_traits;
 use num_traits::Bounded;
 // use std::ops::{AddAssign, SubAssign};
 
-// use std::arch::x86_64::{
-//     __m256i,
-//     _mm256_load_si256,
-// };
+use std::arch::x86_64::{
+    __m256i,
+    _mm256_and_si256,
+    _mm256_cmpgt_epi32,
+    _mm256_movemask_epi8,
+    _mm256_set1_epi32,
+    _mm256_set_epi32,
+};
+
+
+type i32x8 = __m256i;
 
 
 const DEFAULT_SPARSITY: f64 = 10.0;
@@ -28,27 +36,203 @@ const DEFAULT_SPARSITY: f64 = 10.0;
 const MIN_FINAL_SEQ_LEN: usize = 16;
 
 
-// TODO: Let's not use i64 by default. Use i32 
-
-#[derive(Debug)]
-pub struct Interval<I, T> {
+#[derive(Clone, Copy, Debug)]
+pub struct Interval<I, T> where I: Clone, T: Clone {
     pub first: I,
     pub last: I,
     pub metadata: T
 }
 
 
+// 8 intervals packed into AVX registers
+struct IntervalChunk {
+    firsts: i32x8,
+    lasts: i32x8,
+    max_leaf_num: u32
+}
+
+impl IntervalChunk {
+    fn new(intervals: &[Interval<i32, u32>; 8]) -> IntervalChunk {
+        unsafe {
+            // the firsts and lasts are adjust by 1 here because AVX has an
+            // instruction for > but not >=.
+            let firsts =_mm256_set_epi32(
+                intervals[0].first - 1,
+                intervals[1].first - 1,
+                intervals[2].first - 1,
+                intervals[3].first - 1,
+                intervals[4].first - 1,
+                intervals[5].first - 1,
+                intervals[6].first - 1,
+                intervals[7].first - 1);
+
+            let lasts =_mm256_set_epi32(
+                intervals[0].last + 1,
+                intervals[1].last + 1,
+                intervals[2].last + 1,
+                intervals[3].last + 1,
+                intervals[4].last + 1,
+                intervals[5].last + 1,
+                intervals[6].last + 1,
+                intervals[7].last + 1);
+
+            let mut max_leaf_num = intervals[0].metadata;
+            for interval in &intervals[1..] {
+                max_leaf_num = max(max_leaf_num, interval.metadata);
+            }
+
+            return Self {
+                firsts: firsts,
+                lasts: lasts,
+                max_leaf_num: max_leaf_num,
+            }
+        }
+    }
+
+
+    // Query here is a single query encoded like:
+    //   first-1, last, leaf_num-1
+    #[inline(always)]
+    fn query_count_chunk(&self, query_first: i32x8, query_last: i32x8) -> (usize, bool) {
+        unsafe {
+            let cmp1 = _mm256_cmpgt_epi32(query_last, self.firsts);
+            let cmp1_32 = _mm256_movemask_epi8(cmp1);
+
+            let cmp2 = _mm256_cmpgt_epi32(self.lasts, query_first);
+            let cmp2_32 = _mm256_movemask_epi8(cmp2);
+
+            let count = (cmp1_32 & cmp2_32).count_ones() / 4;
+            return (count as usize, cmp1_32 != !0);
+
+            // let cmp1 = _mm256_cmpgt_epi32(self.firsts, query.lasts);
+            // let cmp2 = _mm256_cmpgt_epi32(self.lasts, query.firsts);
+            // let cmp3 = _mm256_cmpgt_epi32(query.leaf_nums, self.leaf_nums);
+            // // TODO: we could also doing movemask_epi8 on each cmp1,2,3, then
+            // // anding them. More instructions but may be faster. (Actually,
+            // // only like one extra instruction)
+            // let cmp = _mm256_and_si256(cmp1, _mm256_and_si256(cmp2, cmp3));
+            // let cmp32 = _mm256_movemask_epi8(cmp);
+            // let count = cmp32.count_ones() / 4;
+            // return (count as usize, _mm256_movemask_epi8(cmp2) != 0);
+        }
+    }
+}
+
+
+struct SearchableIntervals {
+    chunks: Vec<IntervalChunk>,
+
+    // buffer intervals before packing them into a IntervalChunk
+    buf: [Interval<i32, u32>; 8],
+    bufoffset: usize
+}
+
+
+impl SearchableIntervals {
+    fn with_capacity(capacity: usize) -> Self {
+        return Self {
+            chunks: Vec::with_capacity(capacity / 8 + (capacity % 8 != 0) as usize),
+            buf: [Interval{first: i32::MAX, last: i32::MIN, metadata: 0}; 8],
+            bufoffset: 0,
+        }
+    }
+
+    // Add a new interval to the back of the searchable intervals.
+    //
+    // This function handles packing values into 256 bit chunks to accelerate
+    // queries with AVX. To do SIMD searched we also have to maintain two
+    // properties:
+    //   1. Intervals within a chunk have ascending leaf numbers.
+    //   2. EITHER
+    //     a. chunk's max leaf number <= previous chunks max leaf number
+    //     OR
+    //     b. chunks's min leaf number > previous chunks max leaf number
+    //
+    // This saves us from having to compute horizontal maximums across chunks,
+    // which would make this not worthwhile.
+
+    // TODO: What can we do with metadata to deal with padding?
+    // I think I really just have to store an index with each
+    // interval that points to metadata
+
+    fn push(&mut self, interval: Interval<i32, u32>) {
+
+        if self.bufoffset > 0  {
+            let first_interval = self.buf[0];
+            let last_interval = self.buf[self.bufoffset];
+
+            // violates property 1
+            let prop1 =  interval.metadata > last_interval.metadata;
+            let mut prop2a = true;
+            let mut prop2b = true;
+
+            if let Some(last_chunk) = self.chunks.last() {
+                prop2a =
+                    (last_interval.metadata <= last_chunk.max_leaf_num) &&
+                    (     interval.metadata <= last_chunk.max_leaf_num);
+                prop2b =
+                    (first_interval.metadata > last_chunk.max_leaf_num) &&
+                    (      interval.metadata > last_chunk.max_leaf_num);
+            }
+
+            // if adding this interval to the chunk would violate the properties,
+            // pad and dump the partial chunk.
+            if !(prop1 && (prop2a || prop2b)) {
+                self.dump_chunk();
+            }
+        }
+
+
+        assert!(self.bufoffset < 8);
+        self.buf[self.bufoffset] = interval;
+        self.bufoffset += 1;
+        if self.bufoffset == 8 {
+            self.dump_chunk();
+        }
+    }
+
+
+    fn dump_chunk(&mut self) {
+        if self.bufoffset == 0 {
+            return;
+        }
+
+        while self.bufoffset < 8 {
+            self.buf[self.bufoffset] = Interval{
+                first: i32::MIN+1,
+                last: i32::MIN,
+                metadata: u32::MIN,
+            };
+
+            self.bufoffset += 1;
+        }
+
+        self.chunks.push(IntervalChunk::new(&self.buf));
+        self.bufoffset = 0;
+    }
+
+
+    fn len(&self) -> usize {
+        return self.chunks.len() * 8 + self.bufoffset;
+    }
+}
+
+
+
+
+
 /// COITree data structure. A representation of a static set of intervals with
 /// associated metadata, enabling fast overlap and coverage queries.
-pub struct COITree<I, T> {
+pub struct COITree<T> {
 
     // index into `intervals` according to query `last`
     // TODO: since this is static may be worth switching to a sorted list of
     // pairs and just doing interpolation search.
-    index: BTreeMap<I, usize>,
+    index: BTreeMap<i32, usize>,
 
     // intervals arranged to facilitate linear searches
-    intervals: Vec<Interval<I, u32>>,
+    // intervals: Vec<Interval<I, u32>>,
+    searchable_intervals: SearchableIntervals,
 
     // metadata associated with each interval in intervals
     metadata: Vec<T>
@@ -210,7 +394,7 @@ fn next_live_leaf(nodes: &Vec<SurplusTreeNode>, mut i: usize) -> Option<usize> {
 
 impl SurplusTree where {
     fn new<I, T>(intervals: &Vec<Interval<I, T>>, sparsity: f64) -> Self
-            where I: Ord + Copy {
+            where I: Ord + Copy, T: Clone {
         let n = intervals.len();
 
         // permutation that puts (y-sorted) nodes in x-sorted order.
@@ -461,15 +645,15 @@ impl SurplusTree where {
 }
 
 
-impl<I, T> COITree<I, T> {
-    pub fn new(intervals: Vec<Interval<I, T>>) -> COITree<I, T>
-            where I: Bounded + Ord + Copy + Debug, T: Copy {
+impl<T> COITree<T> {
+    pub fn new(intervals: Vec<Interval<i32, T>>) -> COITree<T>
+            where T: Copy {
         return Self::with_sparsity(intervals, DEFAULT_SPARSITY);
     }
 
     // TODO: is intervals getting copied here? Should I be using a mutable ref?
-    pub fn with_sparsity(mut intervals: Vec<Interval<I, T>>, sparsity: f64) -> COITree<I, T>
-            where I: Bounded + Ord + Copy + Debug, T: Copy {
+    pub fn with_sparsity(mut intervals: Vec<Interval<i32, T>>, sparsity: f64) -> COITree<T>
+            where T: Copy {
         assert!(sparsity > 1.0);
 
         let n = intervals.len();
@@ -477,7 +661,7 @@ impl<I, T> COITree<I, T> {
         if n == 0 {
             return Self{
                 index: BTreeMap::new(),
-                intervals: Vec::new(),
+                searchable_intervals: SearchableIntervals::with_capacity(0),
                 metadata: Vec::new()
             }
         }
@@ -485,11 +669,11 @@ impl<I, T> COITree<I, T> {
         let max_size: usize = ((sparsity / (sparsity - 1.0)) * (n as f64)).ceil() as usize;
         dbg!(max_size);
 
-        let mut searchable_intervals: Vec<Interval<I, u32>> = Vec::with_capacity(max_size);
+        let mut searchable_intervals = SearchableIntervals::with_capacity(max_size);
         let mut metadata: Vec<T> = Vec::with_capacity(max_size);
-        let mut index: BTreeMap<I, usize> = BTreeMap::new();
+        let mut index: BTreeMap<i32, usize> = BTreeMap::new();
 
-        index.insert(I::min_value(), 0);
+        index.insert(i32::min_value(), 0);
 
         let now = Instant::now();
         intervals.sort_unstable_by_key(|i| i.last);
@@ -532,6 +716,11 @@ impl<I, T> COITree<I, T> {
                         metadata: leaf_num,
                     });
 
+                    // TODO: Since we are padding chunks, this will be wrong.
+                    // We need to think of an alternative for dealing with
+                    // stored metadata. Probably I will store indexes
+                    // with each chunk, that would also take care of the issue
+                    // of duplicating metadata for the data structure.
                     metadata.push(interval.metadata);
                     l_count += 1;
 
@@ -541,8 +730,10 @@ impl<I, T> COITree<I, T> {
                     }
                 });
 
+                // use the nearest chunk that contains an interval from the next
+                // Li
                 if i < n-1 {
-                    index.insert(boundary, searchable_intervals.len());
+                    index.insert(boundary, searchable_intervals.len() / 8);
                 }
             }
 
@@ -556,6 +747,7 @@ impl<I, T> COITree<I, T> {
                 i += 1;
             }
         }
+        searchable_intervals.dump_chunk();
         eprintln!("main construction loop: {}", now.elapsed().as_millis() as f64 / 1000.0);
 
         // dbg!(&index);
@@ -569,14 +761,14 @@ impl<I, T> COITree<I, T> {
 
         return Self{
             index: index,
-            intervals: searchable_intervals,
+            searchable_intervals: searchable_intervals,
             metadata: metadata
         };
     }
 
 
     #[inline(always)]
-    fn find_search_start(&self, first: I) -> Option<usize> where I: Ord {
+    fn find_search_start(&self, first: i32) -> Option<usize> {
         if let Some((_, i)) = self.index.range((Bound::Unbounded, Bound::Included(first))).next_back() {
             return Some(*i);
         } else {
@@ -586,42 +778,35 @@ impl<I, T> COITree<I, T> {
 
     // TODO: disabling inlining here to make profiling easier
     #[inline(never)]
-    pub fn query_count(&self, first: I, last: I) -> (usize, usize)
-            where I: Bounded + Ord + Copy + Debug {
+    pub fn query_count(&self, first: i32, last: i32) -> usize {
 
         // let mut misses = 0;
         let mut count = 0;
-        let mut misses = 0;
         if let Some(search_start) = self.find_search_start(first) {
-            let mut last_hit_id: u32 = 0;
-            for interval in &self.intervals[search_start..] {
-                if interval.first > last {
+            let (first_vec, last_vec) = unsafe {
+                (_mm256_set1_epi32(first),
+                _mm256_set1_epi32(last))
+            };
+
+            let mut last_leaf_num: u32 = 0;
+
+            for chunk in &self.searchable_intervals.chunks[search_start..] {
+                if chunk.max_leaf_num <= last_leaf_num {
+                    continue;
+                }
+                last_leaf_num = chunk.max_leaf_num;
+
+                let (chunk_count, stop_cond) = chunk.query_count_chunk(first_vec, last_vec);
+                count += chunk_count;
+                if stop_cond {
                     break;
                 }
-                // count += (interval.last >= first && interval.metadata > last_hit_id) as usize;
-
-                if interval.last >= first && interval.metadata > last_hit_id {
-                    // println!("hit: {:?} {:?} {}", interval.first, interval.last, interval.metadata);
-                    count += 1;
-                } else {
-                    // println!("miss: {:?} {:?} {}", interval.first, interval.last, interval.metadata);
-                    misses += 1;
-                }
-
-                // } else if interval.last >= first && interval.metadata > last_hit_id {
-                //     // debug_assert!(interval.first <= last);
-                //     count += 1;
-                //     // eprintln!("hit: ({:?}, {:?})", interval.first, interval.last);
-                // } else {
-                //     // eprintln!("miss: ({:?}, {:?})", interval.first, interval.last);
-                //     misses += 1;
-                // }
-                last_hit_id = max(last_hit_id, interval.metadata);
             }
         }
 
         // eprintln!("hit prop: {}", count as f64 / (count + misses) as f64);
 
-        return (count, misses);
+        // return (count, misses);
+        return count;
     }
 }
