@@ -4,22 +4,15 @@
 //! data in mind.
 //!
 
-// use std::marker::Copy;
-// use std::convert::{TryInto, TryFrom};
 use std::fmt::Debug;
 use std::collections::{Bound, BTreeMap, BTreeSet};
 use std::option::Option;
 use std::time::Instant;
-use std::cmp::{min, max};
-use std::mem::transmute;
+use std::cmp::max;
 
-extern crate num_traits;
-use num_traits::Bounded;
-// use std::ops::{AddAssign, SubAssign};
 
 use std::arch::x86_64::{
     __m256i,
-    _mm256_and_si256,
     _mm256_cmpgt_epi32,
     _mm256_movemask_epi8,
     _mm256_set1_epi32,
@@ -31,8 +24,6 @@ type i32x8 = __m256i;
 
 
 const DEFAULT_SPARSITY: f64 = 10.0;
-// const DEFAULT_SPARSITY: f64 = 2.0;
-// const DEFAULT_SPARSITY: f64 = 1.5;
 const MIN_FINAL_SEQ_LEN: usize = 16;
 
 
@@ -104,17 +95,6 @@ impl IntervalChunk {
 
             let count = (cmp1_32 & cmp2_32).count_ones() / 4;
             return (count as usize, cmp1_32 != !0);
-
-            // let cmp1 = _mm256_cmpgt_epi32(self.firsts, query.lasts);
-            // let cmp2 = _mm256_cmpgt_epi32(self.lasts, query.firsts);
-            // let cmp3 = _mm256_cmpgt_epi32(query.leaf_nums, self.leaf_nums);
-            // // TODO: we could also doing movemask_epi8 on each cmp1,2,3, then
-            // // anding them. More instructions but may be faster. (Actually,
-            // // only like one extra instruction)
-            // let cmp = _mm256_and_si256(cmp1, _mm256_and_si256(cmp2, cmp3));
-            // let cmp32 = _mm256_movemask_epi8(cmp);
-            // let count = cmp32.count_ones() / 4;
-            // return (count as usize, _mm256_movemask_epi8(cmp2) != 0);
         }
     }
 }
@@ -123,9 +103,8 @@ impl IntervalChunk {
 struct SearchableIntervals {
     chunks: Vec<IntervalChunk>,
 
-    //
-    chunk_max_ends: BTreeSet<u32>,
-    nearest_chunk_max_end: u32,
+    chunk_max_leaf_nums: BTreeSet<u32>,
+    nearest_chunk_max_leaf_num: u32,
 
     // buffer intervals before packing them into a IntervalChunk
     buf: [Interval<i32, u32>; 8],
@@ -137,8 +116,8 @@ impl SearchableIntervals {
     fn with_capacity(capacity: usize) -> Self {
         return Self {
             chunks: Vec::with_capacity(capacity / 8 + (capacity % 8 != 0) as usize),
-            chunk_max_ends: BTreeSet::new(),
-            nearest_chunk_max_end: u32::MAX,
+            chunk_max_leaf_nums: BTreeSet::new(),
+            nearest_chunk_max_leaf_num: u32::MAX,
             buf: [Interval{first: i32::MAX, last: i32::MIN, metadata: 0}; 8],
             bufoffset: 0,
         }
@@ -157,17 +136,17 @@ impl SearchableIntervals {
     fn push(&mut self, interval: Interval<i32, u32>) {
         if self.bufoffset > 0 {
             let last_interval = self.buf[self.bufoffset - 1];
-            if interval.metadata > self.nearest_chunk_max_end || interval.metadata <= last_interval.metadata {
+            if interval.metadata > self.nearest_chunk_max_leaf_num || interval.metadata <= last_interval.metadata {
                 self.dump_chunk();
             }
         }
 
         if self.bufoffset == 0 {
-            if let Some(nearest_max_end) = self.chunk_max_ends.range(
+            if let Some(nearest_chunk_max_leaf_num) = self.chunk_max_leaf_nums.range(
                     (Bound::Included(interval.metadata), Bound::Unbounded)).next() {
-                self.nearest_chunk_max_end = *nearest_max_end;
+                self.nearest_chunk_max_leaf_num = *nearest_chunk_max_leaf_num;
             } else {
-                self.nearest_chunk_max_end = u32::MAX;
+                self.nearest_chunk_max_leaf_num = u32::MAX;
             }
         }
 
@@ -196,7 +175,7 @@ impl SearchableIntervals {
         }
 
         self.chunks.push(IntervalChunk::new(&self.buf));
-        self.chunk_max_ends.insert(self.chunks.last().unwrap().max_leaf_num);
+        self.chunk_max_leaf_nums.insert(self.chunks.last().unwrap().max_leaf_num);
         self.bufoffset = 0;
     }
 
@@ -599,7 +578,6 @@ impl<T> COITree<T> {
         return Self::with_sparsity(intervals, DEFAULT_SPARSITY);
     }
 
-    // TODO: is intervals getting copied here? Should I be using a mutable ref?
     pub fn with_sparsity(mut intervals: Vec<Interval<i32, T>>, sparsity: f64) -> COITree<T>
             where T: Copy {
         assert!(sparsity > 1.0);
@@ -695,6 +673,7 @@ impl<T> COITree<T> {
 
         dbg!(searchable_intervals.len());
         dbg!(index.len());
+        dbg!(searchable_intervals.chunk_max_leaf_nums.len());
 
         // dbg!(&index);
 
@@ -720,9 +699,7 @@ impl<T> COITree<T> {
     }
 
     // TODO: disabling inlining here to make profiling easier
-    #[inline(never)]
     pub fn query_count(&self, first: i32, last: i32) -> usize {
-
         // let mut misses = 0;
         let mut count = 0;
         if let Some(search_start) = self.find_search_start(first) {
