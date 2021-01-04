@@ -45,6 +45,7 @@ pub struct Interval<I, T> where I: Clone, T: Clone {
 
 
 // 8 intervals packed into AVX registers
+#[derive(Debug)]
 struct IntervalChunk {
     firsts: i32x8,
     lasts: i32x8,
@@ -53,6 +54,26 @@ struct IntervalChunk {
 
 impl IntervalChunk {
     fn new(intervals: &[Interval<i32, u32>; 8]) -> IntervalChunk {
+        // dbg!((
+        //     intervals[0].first,
+        //     intervals[1].first,
+        //     intervals[2].first,
+        //     intervals[3].first,
+        //     intervals[4].first,
+        //     intervals[5].first,
+        //     intervals[6].first,
+        //     intervals[7].first));
+
+        // dbg!((
+        //     intervals[0].last,
+        //     intervals[1].last,
+        //     intervals[2].last,
+        //     intervals[3].last,
+        //     intervals[4].last,
+        //     intervals[5].last,
+        //     intervals[6].last,
+        //     intervals[7].last));
+
         unsafe {
             // the firsts and lasts are adjust by 1 here because AVX has an
             // instruction for > but not >=.
@@ -80,6 +101,8 @@ impl IntervalChunk {
             for interval in &intervals[1..] {
                 max_leaf_num = max(max_leaf_num, interval.metadata);
             }
+
+            // dbg!(max_leaf_num);
 
             return Self {
                 firsts: firsts,
@@ -155,8 +178,8 @@ impl SearchableIntervals {
     // I think I really just have to store an index with each
     // interval that points to metadata
 
-    fn push(&mut self, interval: Interval<i32, u32>) {
 
+    fn push(&mut self, interval: Interval<i32, u32>) {
         if self.bufoffset > 0  {
             let first_interval = self.buf[0];
             let last_interval = self.buf[self.bufoffset];
@@ -673,7 +696,7 @@ impl<T> COITree<T> {
         let mut metadata: Vec<T> = Vec::with_capacity(max_size);
         let mut index: BTreeMap<i32, usize> = BTreeMap::new();
 
-        index.insert(i32::min_value(), 0);
+        // index.insert(i32::min_value(), 0);
 
         let now = Instant::now();
         intervals.sort_unstable_by_key(|i| i.last);
@@ -686,10 +709,7 @@ impl<T> COITree<T> {
         // searchable intervals stores an extra integer to disambiguate and
         // avoid counting the same hits more than once.
 
-        // TODO: NO THIS DOESN'T DISAMBIGUATE AT ALL
-        // We need to assign these ids to leaves in the surplus tree
-        // Ok, where do we assign them then?
-        // Can `map_prefix` keep track of the leaf number?
+        let mut boundary = i32::MIN;
 
         let now = Instant::now();
         let mut i = 0;
@@ -703,10 +723,12 @@ impl<T> COITree<T> {
             };
 
             if let Some(max_end) = max_end_opt {
-                let boundary = intervals[i].last;
+                let last_boundary = boundary;
+                boundary = intervals[i].last;
 
                 let mut killed_count = 0;
                 let mut l_count = 0;
+                let mut is_first_interval = true;
 
                 surplus_tree.map_prefix(max_end, |tree, idx, leaf_num| {
                     let interval = &intervals[idx];
@@ -716,11 +738,13 @@ impl<T> COITree<T> {
                         metadata: leaf_num,
                     });
 
-                    // TODO: Since we are padding chunks, this will be wrong.
-                    // We need to think of an alternative for dealing with
-                    // stored metadata. Probably I will store indexes
-                    // with each chunk, that would also take care of the issue
-                    // of duplicating metadata for the data structure.
+                    // once we insert the first interval >= than the last boundary,
+                    // we know where to put the index entry
+                    if is_first_interval {
+                        index.insert(last_boundary, searchable_intervals.len() / 8);
+                        is_first_interval = false;
+                    }
+
                     metadata.push(interval.metadata);
                     l_count += 1;
 
@@ -729,12 +753,6 @@ impl<T> COITree<T> {
                         killed_count += 1;
                     }
                 });
-
-                // use the nearest chunk that contains an interval from the next
-                // Li
-                if i < n-1 {
-                    index.insert(boundary, searchable_intervals.len() / 8);
-                }
             }
 
             surplus_tree.set_node_useless(i);
@@ -749,8 +767,6 @@ impl<T> COITree<T> {
         }
         searchable_intervals.dump_chunk();
         eprintln!("main construction loop: {}", now.elapsed().as_millis() as f64 / 1000.0);
-
-        // dbg!(&index);
 
         dbg!(searchable_intervals.len());
         dbg!(index.len());
@@ -783,6 +799,8 @@ impl<T> COITree<T> {
         // let mut misses = 0;
         let mut count = 0;
         if let Some(search_start) = self.find_search_start(first) {
+            // dbg!(search_start);
+
             let (first_vec, last_vec) = unsafe {
                 (_mm256_set1_epi32(first),
                 _mm256_set1_epi32(last))
