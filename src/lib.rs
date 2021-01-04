@@ -182,7 +182,7 @@ impl SearchableIntervals {
     fn push(&mut self, interval: Interval<i32, u32>) {
         if self.bufoffset > 0  {
             let first_interval = self.buf[0];
-            let last_interval = self.buf[self.bufoffset];
+            let last_interval = self.buf[self.bufoffset - 1];
 
             // violates property 1
             let prop1 =  interval.metadata > last_interval.metadata;
@@ -198,9 +198,15 @@ impl SearchableIntervals {
                     (      interval.metadata > last_chunk.max_leaf_num);
             }
 
+
             // if adding this interval to the chunk would violate the properties,
             // pad and dump the partial chunk.
             if !(prop1 && (prop2a || prop2b)) {
+                // eprintln!("dumping");
+                // dbg!(interval);
+                // dbg!(prop1);
+                // dbg!(prop2a);
+                // dbg!(prop2b);
                 self.dump_chunk();
             }
         }
@@ -771,6 +777,8 @@ impl<T> COITree<T> {
         dbg!(searchable_intervals.len());
         dbg!(index.len());
 
+        // dbg!(&index);
+
         // TODO: under this scheme we end copying metadata entries. That's bad
         // if metadata is large. We could consider adding an index to intervals
         // to avoid this. Or we could just store references to metadata.
@@ -798,6 +806,7 @@ impl<T> COITree<T> {
 
         // let mut misses = 0;
         let mut count = 0;
+        let mut skip_count = 0;
         if let Some(search_start) = self.find_search_start(first) {
             // dbg!(search_start);
 
@@ -810,17 +819,22 @@ impl<T> COITree<T> {
 
             for chunk in &self.searchable_intervals.chunks[search_start..] {
                 if chunk.max_leaf_num <= last_leaf_num {
+                    skip_count += 1;
                     continue;
                 }
                 last_leaf_num = chunk.max_leaf_num;
 
                 let (chunk_count, stop_cond) = chunk.query_count_chunk(first_vec, last_vec);
+                // dbg!(chunk);
+                // dbg!(chunk_count);
                 count += chunk_count;
                 if stop_cond {
                     break;
                 }
             }
         }
+
+        // dbg!(skip_count);
 
         // eprintln!("hit prop: {}", count as f64 / (count + misses) as f64);
 
