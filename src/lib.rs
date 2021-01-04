@@ -7,7 +7,7 @@
 // use std::marker::Copy;
 // use std::convert::{TryInto, TryFrom};
 use std::fmt::Debug;
-use std::collections::{Bound, BTreeMap};
+use std::collections::{Bound, BTreeMap, BTreeSet};
 use std::option::Option;
 use std::time::Instant;
 use std::cmp::{min, max};
@@ -54,26 +54,6 @@ struct IntervalChunk {
 
 impl IntervalChunk {
     fn new(intervals: &[Interval<i32, u32>; 8]) -> IntervalChunk {
-        // dbg!((
-        //     intervals[0].first,
-        //     intervals[1].first,
-        //     intervals[2].first,
-        //     intervals[3].first,
-        //     intervals[4].first,
-        //     intervals[5].first,
-        //     intervals[6].first,
-        //     intervals[7].first));
-
-        // dbg!((
-        //     intervals[0].last,
-        //     intervals[1].last,
-        //     intervals[2].last,
-        //     intervals[3].last,
-        //     intervals[4].last,
-        //     intervals[5].last,
-        //     intervals[6].last,
-        //     intervals[7].last));
-
         unsafe {
             // the firsts and lasts are adjust by 1 here because AVX has an
             // instruction for > but not >=.
@@ -101,8 +81,6 @@ impl IntervalChunk {
             for interval in &intervals[1..] {
                 max_leaf_num = max(max_leaf_num, interval.metadata);
             }
-
-            // dbg!(max_leaf_num);
 
             return Self {
                 firsts: firsts,
@@ -145,6 +123,10 @@ impl IntervalChunk {
 struct SearchableIntervals {
     chunks: Vec<IntervalChunk>,
 
+    //
+    chunk_max_ends: BTreeSet<u32>,
+    nearest_chunk_max_end: u32,
+
     // buffer intervals before packing them into a IntervalChunk
     buf: [Interval<i32, u32>; 8],
     bufoffset: usize
@@ -155,6 +137,8 @@ impl SearchableIntervals {
     fn with_capacity(capacity: usize) -> Self {
         return Self {
             chunks: Vec::with_capacity(capacity / 8 + (capacity % 8 != 0) as usize),
+            chunk_max_ends: BTreeSet::new(),
+            nearest_chunk_max_end: u32::MAX,
             buf: [Interval{first: i32::MAX, last: i32::MIN, metadata: 0}; 8],
             bufoffset: 0,
         }
@@ -162,55 +146,30 @@ impl SearchableIntervals {
 
     // Add a new interval to the back of the searchable intervals.
     //
-    // This function handles packing values into 256 bit chunks to accelerate
-    // queries with AVX. To do SIMD searched we also have to maintain two
-    // properties:
-    //   1. Intervals within a chunk have ascending leaf numbers.
-    //   2. EITHER
-    //     a. chunk's max leaf number <= previous chunks max leaf number
-    //     OR
-    //     b. chunks's min leaf number > previous chunks max leaf number
+    // We have to take care to produce chunks that don't have a range of leaf
+    // numbers overlapping the maximum leaf number of any prior chunk. This
+    // is so we can process chunks one at a time without having to chuck maximum
+    // leaf number at each step.
     //
-    // This saves us from having to compute horizontal maximums across chunks,
-    // which would make this not worthwhile.
-
     // TODO: What can we do with metadata to deal with padding?
     // I think I really just have to store an index with each
     // interval that points to metadata
-
-
     fn push(&mut self, interval: Interval<i32, u32>) {
-        if self.bufoffset > 0  {
-            let first_interval = self.buf[0];
+        if self.bufoffset > 0 {
             let last_interval = self.buf[self.bufoffset - 1];
-
-            // violates property 1
-            let prop1 =  interval.metadata > last_interval.metadata;
-            let mut prop2a = true;
-            let mut prop2b = true;
-
-            if let Some(last_chunk) = self.chunks.last() {
-                prop2a =
-                    (last_interval.metadata <= last_chunk.max_leaf_num) &&
-                    (     interval.metadata <= last_chunk.max_leaf_num);
-                prop2b =
-                    (first_interval.metadata > last_chunk.max_leaf_num) &&
-                    (      interval.metadata > last_chunk.max_leaf_num);
-            }
-
-
-            // if adding this interval to the chunk would violate the properties,
-            // pad and dump the partial chunk.
-            if !(prop1 && (prop2a || prop2b)) {
-                // eprintln!("dumping");
-                // dbg!(interval);
-                // dbg!(prop1);
-                // dbg!(prop2a);
-                // dbg!(prop2b);
+            if interval.metadata > self.nearest_chunk_max_end || interval.metadata <= last_interval.metadata {
                 self.dump_chunk();
             }
         }
 
+        if self.bufoffset == 0 {
+            if let Some(nearest_max_end) = self.chunk_max_ends.range(
+                    (Bound::Included(interval.metadata), Bound::Unbounded)).next() {
+                self.nearest_chunk_max_end = *nearest_max_end;
+            } else {
+                self.nearest_chunk_max_end = u32::MAX;
+            }
+        }
 
         assert!(self.bufoffset < 8);
         self.buf[self.bufoffset] = interval;
@@ -237,6 +196,7 @@ impl SearchableIntervals {
         }
 
         self.chunks.push(IntervalChunk::new(&self.buf));
+        self.chunk_max_ends.insert(self.chunks.last().unwrap().max_leaf_num);
         self.bufoffset = 0;
     }
 
@@ -245,9 +205,6 @@ impl SearchableIntervals {
         return self.chunks.len() * 8 + self.bufoffset;
     }
 }
-
-
-
 
 
 /// COITree data structure. A representation of a static set of intervals with
@@ -318,44 +275,6 @@ pub struct SurplusTree {
     index_to_leaf: Vec<usize>,
 }
 
-
-// // Iterates over ancestors of a given nodes up to the root, along with
-// // each nodes immediate children
-// struct AncestorIterator<'a> {
-//     nodes: &'a mut Vec<SurplusTreeNode>,
-//     root: Option<usize>
-// }
-
-
-// impl<'a, 'b> Iterator for AncestorIterator<'a> {
-//     type Item = (&'b mut SurplusTreeNode, &'b SurplusTreeNode, &'b SurplusTreeNode);
-
-//     fn next(&mut self) -> Option<Self::Item> {
-//         if let Some(root) = self.root {
-//             if root == 0 {
-//                 self.root = None;
-//             } else {
-//                 self.root = Some((root-1)/2);
-//             }
-
-//             let left = 2*root+1;
-//             let right = 2*root+2;
-
-//             let ret: Self::Item = unsafe {
-//                 (
-//                     self.nodes.get_unchecked_mut(root),
-//                     self.nodes.get_unchecked(left),
-//                     self.nodes.get_unchecked(right)
-//                 )
-//             };
-
-//             return Some(ret);
-
-//         } else {
-//             return None;
-//         }
-//     }
-// }
 
 // Function for traversing from one leaf node index to the next.
 fn next_live_leaf(nodes: &Vec<SurplusTreeNode>, mut i: usize) -> Option<usize> {
@@ -806,27 +725,19 @@ impl<T> COITree<T> {
 
         // let mut misses = 0;
         let mut count = 0;
-        let mut skip_count = 0;
         if let Some(search_start) = self.find_search_start(first) {
-            // dbg!(search_start);
-
             let (first_vec, last_vec) = unsafe {
-                (_mm256_set1_epi32(first),
-                _mm256_set1_epi32(last))
-            };
+                (_mm256_set1_epi32(first), _mm256_set1_epi32(last)) };
 
             let mut last_leaf_num: u32 = 0;
 
             for chunk in &self.searchable_intervals.chunks[search_start..] {
                 if chunk.max_leaf_num <= last_leaf_num {
-                    skip_count += 1;
                     continue;
                 }
                 last_leaf_num = chunk.max_leaf_num;
 
                 let (chunk_count, stop_cond) = chunk.query_count_chunk(first_vec, last_vec);
-                // dbg!(chunk);
-                // dbg!(chunk_count);
                 count += chunk_count;
                 if stop_cond {
                     break;
@@ -834,11 +745,6 @@ impl<T> COITree<T> {
             }
         }
 
-        // dbg!(skip_count);
-
-        // eprintln!("hit prop: {}", count as f64 / (count + misses) as f64);
-
-        // return (count, misses);
         return count;
     }
 }
