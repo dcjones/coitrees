@@ -40,6 +40,9 @@ pub struct Interval<I, T> where I: Clone, T: Clone {
 struct IntervalChunk {
     firsts: i32x8,
     lasts: i32x8,
+
+    // TODO: have this point to a metadata array
+    metadata_idx: [usize; 8],
     max_leaf_num: u32
 }
 
@@ -76,6 +79,7 @@ impl IntervalChunk {
             return Self {
                 firsts: firsts,
                 lasts: lasts,
+                metadata_idx: [0; 8],
                 max_leaf_num: max_leaf_num,
             }
         }
@@ -616,8 +620,7 @@ impl<T> COITree<T> {
 
         let now = Instant::now();
         let mut i = 0;
-        while i < n && surplus_tree.num_live_nodes() > 0 {
-
+        while i <= n && surplus_tree.num_live_nodes() > 0 {
             let max_end_opt = if n - i <= MIN_FINAL_SEQ_LEN {
                 i = n-1;
                 surplus_tree.last_live_leaf()
@@ -656,6 +659,10 @@ impl<T> COITree<T> {
                         killed_count += 1;
                     }
                 });
+            }
+
+            if n -i <= MIN_FINAL_SEQ_LEN {
+                break;
             }
 
             surplus_tree.set_node_useless(i);
@@ -698,7 +705,6 @@ impl<T> COITree<T> {
         }
     }
 
-    // TODO: disabling inlining here to make profiling easier
     pub fn query_count(&self, first: i32, last: i32) -> usize {
         // let mut misses = 0;
         let mut count = 0;
