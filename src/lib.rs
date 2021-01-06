@@ -22,11 +22,15 @@ use std::cmp::{min, max};
 use std::mem::transmute;
 use std::arch::x86_64::{
     __m256i,
+    _mm256_and_si256,
     _mm256_cmpgt_epi32,
+    _mm256_extract_epi32,
     _mm256_movemask_epi8,
     _mm256_set1_epi32,
     _mm256_set_epi32,
-    _mm256_and_si256,
+    _mm256_permute2x128_si256,
+    _mm256_permute4x64_epi64,
+    _mm256_max_epi32,
 };
 
 
@@ -130,10 +134,6 @@ struct IntervalNode<T, I> where T: Clone, I: IntWithMax
     // subtree interval
     subtree_last: i32,
 
-    // minimum first and maximum last
-    min_first: i32,
-    max_last: i32,
-
     firsts: i32x8,
     lasts: i32x8,
     metadata: [T; 8],
@@ -150,10 +150,8 @@ impl<T, I> IntervalNode<T, I> where T: Clone, I: IntWithMax {
         assert!(intervals.len() > 0 && intervals.len() <= 8);
 
         unsafe {
-            let mut min_first = intervals[0].first;
             let mut max_last = intervals[0].last;
             for interval in &intervals[1..] {
-                min_first = min(min_first, interval.first);
                 max_last = max(max_last, interval.last);
             }
 
@@ -190,8 +188,6 @@ impl<T, I> IntervalNode<T, I> where T: Clone, I: IntWithMax {
                 intervals[7].metadata ];
 
             return Self {
-                min_first: min_first,
-                max_last: max_last,
                 subtree_last: max_last,
                 firsts: firsts,
                 lasts: lasts,
@@ -202,9 +198,30 @@ impl<T, I> IntervalNode<T, I> where T: Clone, I: IntWithMax {
         }
     }
 
-    /// Length spanned by the interval. (Interval are end-inclusive.)
-    pub fn len(&self) -> i32 {
-        return (self.max_last - self.min_first + 1).max(0);
+
+    fn min_first(&self) -> i32 {
+        return unsafe {
+            _mm256_extract_epi32(self.firsts, 0)
+        };
+    }
+
+
+    fn max_last(&self) -> i32 {
+        // faster ways to do this, but doesn't really matter
+        let m = unsafe { max(
+            max(max(
+                _mm256_extract_epi32(self.lasts, 0),
+                _mm256_extract_epi32(self.lasts, 1)),
+            max(
+                _mm256_extract_epi32(self.lasts, 2),
+                _mm256_extract_epi32(self.lasts, 3))),
+            max(max(
+                _mm256_extract_epi32(self.lasts, 4),
+                _mm256_extract_epi32(self.lasts, 5)),
+            max(
+                _mm256_extract_epi32(self.lasts, 6),
+                _mm256_extract_epi32(self.lasts, 7)))) };
+        return m;
     }
 
 
@@ -493,7 +510,7 @@ fn query_recursion_count<T, I>(
     if node.left == node.right { // simple subtree
         let mut count = 0;
         for node in &nodes[root_idx..root_idx + node.right.to_usize()] {
-            if last < node.min_first {
+            if last < node.min_first() {
                 break;
             } else {
                 count += node.query_count_chunk(firstv, lastv);
@@ -513,7 +530,7 @@ fn query_recursion_count<T, I>(
 
         if node.right < I::MAX {
             let right = node.right.to_usize();
-            if overlaps(node.min_first, nodes[right].subtree_last, first, last) {
+            if overlaps(node.min_first(), nodes[right].subtree_last, first, last) {
                 count += query_recursion_count(nodes, right, first, last, firstv, lastv);
             }
         }
@@ -775,7 +792,7 @@ fn traverse_recursion<T, I>(
     info[root_idx].parent = parent;
     *preorder += 1;
 
-    let mut subtree_first = nodes[root_idx].min_first;
+    let mut subtree_first = nodes[root_idx].min_first();
 
     let mut left_expected_hits = 0.0;
     let mut left_subtree_span = 0;
@@ -822,7 +839,7 @@ fn traverse_recursion<T, I>(
     debug_assert!(right_subtree_span <= subtree_span);
 
     let expected_hits =
-        ((nodes[root_idx].max_last - nodes[root_idx].min_first + 1) as f32 +
+        ((nodes[root_idx].max_last() - nodes[root_idx].min_first() + 1) as f32 +
         (left_subtree_span as f32) * left_expected_hits +
         (right_subtree_span as f32) * right_expected_hits) / subtree_span as f32;
 
