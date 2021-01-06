@@ -18,7 +18,7 @@ use std::marker::Copy;
 use std::convert::{TryInto, TryFrom};
 use std::fmt::Debug;
 use std::ops::{AddAssign, SubAssign};
-use std::cmp::{min, max};
+use std::cmp::max;
 use std::mem::transmute;
 use std::arch::x86_64::{
     __m256i,
@@ -27,13 +27,10 @@ use std::arch::x86_64::{
     _mm256_extract_epi32,
     _mm256_movemask_epi8,
     _mm256_set1_epi32,
-    _mm256_set_epi32,
-    _mm256_permute2x128_si256,
-    _mm256_permute4x64_epi64,
-    _mm256_max_epi32,
+    _mm256_set_epi32
 };
 
-
+#[allow(non_camel_case_types)]
 type i32x8 = __m256i;
 
 
@@ -107,8 +104,9 @@ impl IntWithMax for u16 {
 ///     posstrand: bool
 /// }
 ///
-/// let some_interval = Interval::<_, usize>::new(
-///     10, 24000, MyMetadata{chrom: String::from("chr1"), posstrand: false});
+/// let some_interval = Interval{
+///     first: 10, last: 24000,
+///     metadata: MyMetadata{chrom: String::from("chr1"), posstrand: false}};
 ///
 /// assert_eq!(some_interval.len(), 23991);
 /// ```
@@ -159,7 +157,7 @@ struct IntervalNode<T, I> where T: Clone, I: IntWithMax
 
 
 impl<T, I> IntervalNode<T, I> where T: Clone, I: IntWithMax {
-    fn new(intervals: &[Interval<T>; 8]) -> Self where T: Copy, {
+    fn new(intervals: &[Interval<T>; 8]) -> Self where T: Copy {
         assert!(intervals.len() > 0 && intervals.len() <= 8);
 
         unsafe {
@@ -171,24 +169,24 @@ impl<T, I> IntervalNode<T, I> where T: Clone, I: IntWithMax {
             // the firsts and lasts are adjust by 1 here because AVX has an
             // instruction for > but not >=.
             let firsts =_mm256_set_epi32(
-                intervals[0].first - 1,
-                intervals[1].first - 1,
-                intervals[2].first - 1,
-                intervals[3].first - 1,
-                intervals[4].first - 1,
-                intervals[5].first - 1,
+                intervals[7].first - 1,
                 intervals[6].first - 1,
-                intervals[7].first - 1);
+                intervals[5].first - 1,
+                intervals[4].first - 1,
+                intervals[3].first - 1,
+                intervals[2].first - 1,
+                intervals[1].first - 1,
+                intervals[0].first - 1);
 
             let lasts =_mm256_set_epi32(
-                intervals[0].last + 1,
-                intervals[1].last + 1,
-                intervals[2].last + 1,
-                intervals[3].last + 1,
-                intervals[4].last + 1,
-                intervals[5].last + 1,
+                intervals[7].last + 1,
                 intervals[6].last + 1,
-                intervals[7].last + 1);
+                intervals[5].last + 1,
+                intervals[4].last + 1,
+                intervals[3].last + 1,
+                intervals[2].last + 1,
+                intervals[1].last + 1,
+                intervals[0].last + 1);
 
             let metadata: [T; 8] = [
                 intervals[0].metadata,
@@ -220,16 +218,15 @@ impl<T, I> IntervalNode<T, I> where T: Clone, I: IntWithMax {
 
     fn last(&self, i: usize) -> i32 {
         assert!(i < 8);
-        return unsafe { transmute::<&i32x8, &[i32; 8]>(&self.lasts) } [i];
+        return unsafe { transmute::<&i32x8, &[i32; 8]>(&self.lasts) }[i];
     }
 
 
     fn min_first(&self) -> i32 {
         return unsafe {
-            _mm256_extract_epi32(self.firsts, 0)
+            _mm256_extract_epi32(self.firsts, 0) + 1
         };
     }
-
 
     fn max_last(&self) -> i32 {
         // faster ways to do this, but doesn't really matter
@@ -245,7 +242,7 @@ impl<T, I> IntervalNode<T, I> where T: Clone, I: IntWithMax {
                 _mm256_extract_epi32(self.lasts, 5)),
             max(
                 _mm256_extract_epi32(self.lasts, 6),
-                _mm256_extract_epi32(self.lasts, 7)))) };
+                _mm256_extract_epi32(self.lasts, 7)))) - 1 };
         return m;
     }
 
@@ -264,13 +261,14 @@ impl<T, I> IntervalNode<T, I> where T: Clone, I: IntWithMax {
 
     fn query_chunk_firsts<'a, F>(&'a self, query_first: i32x8, query_last: i32x8, mut visit: F)
             where F: FnMut(i32, i32, &'a T) {
-        let cmp = unsafe {
+        let cmp: u32 = unsafe {
             let cmp1 = _mm256_cmpgt_epi32(query_last, self.firsts);
             let cmp2 = _mm256_cmpgt_epi32(self.firsts, query_first);
-            _mm256_movemask_epi8(_mm256_and_si256(cmp1, cmp2)) };
+            let cmp =_mm256_movemask_epi8(_mm256_and_si256(cmp1, cmp2));
+            transmute(cmp)
+         };
 
-        // could be made nicer with a macro perhaps?
-        let masks = [0xf, 0xf0, 0xf00, 0xf000, 0xf0000, 0xf00000, 0xf000000, 0xf000000];
+        let masks = [0xf, 0xf0, 0xf00, 0xf000, 0xf0000, 0xf00000, 0xf000000, 0xf0000000];
         if cmp & masks[0] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 0) + 1 },
@@ -307,13 +305,13 @@ impl<T, I> IntervalNode<T, I> where T: Clone, I: IntWithMax {
                 unsafe { _mm256_extract_epi32(self.lasts, 5) - 1 },
                 &self.metadata[5] );
         }
-        if cmp & masks[6] != 6 {
+        if cmp & masks[6] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 6) + 1 },
                 unsafe { _mm256_extract_epi32(self.lasts, 6) - 1 },
                 &self.metadata[6] );
         }
-        if cmp & masks[7] != 7 {
+        if cmp & masks[7] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 7) + 1 },
                 unsafe { _mm256_extract_epi32(self.lasts, 7) - 1 },
@@ -324,13 +322,15 @@ impl<T, I> IntervalNode<T, I> where T: Clone, I: IntWithMax {
     fn query_chunk_metadata<'a, F>(&'a self, query_first: i32x8, query_last: i32x8, mut visit: F)
             where F: FnMut(i32, i32, &'a T) {
 
-        let cmp = unsafe {
+        let cmp: u32 = unsafe {
             let cmp1 = _mm256_cmpgt_epi32(query_last, self.firsts);
             let cmp2 = _mm256_cmpgt_epi32(self.lasts, query_first);
-            _mm256_movemask_epi8(_mm256_and_si256(cmp1, cmp2)) };
+            let cmp =_mm256_movemask_epi8(_mm256_and_si256(cmp1, cmp2));
+            transmute(cmp)
+         };
 
         // could be made nicer with a macro perhaps?
-        let masks = [0xf, 0xf0, 0xf00, 0xf000, 0xf0000, 0xf00000, 0xf000000, 0xf000000];
+        let masks = [0xf, 0xf0, 0xf00, 0xf000, 0xf0000, 0xf00000, 0xf000000, 0xf0000000];
         if cmp & masks[0] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 0) + 1 },
@@ -367,13 +367,13 @@ impl<T, I> IntervalNode<T, I> where T: Clone, I: IntWithMax {
                 unsafe { _mm256_extract_epi32(self.lasts, 5) - 1 },
                 &self.metadata[5] );
         }
-        if cmp & masks[6] != 6 {
+        if cmp & masks[6] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 6) + 1 },
                 unsafe { _mm256_extract_epi32(self.lasts, 6) - 1 },
                 &self.metadata[6] );
         }
-        if cmp & masks[7] != 7 {
+        if cmp & masks[7] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 7) + 1},
                 unsafe { _mm256_extract_epi32(self.lasts, 7) - 1 },
@@ -384,13 +384,14 @@ impl<T, I> IntervalNode<T, I> where T: Clone, I: IntWithMax {
     fn query_chunk<F>(&self, query_first: i32x8, query_last: i32x8, mut visit: F)
             where F: FnMut(i32, i32) {
 
-        let cmp = unsafe {
+        let cmp: u32 = unsafe {
             let cmp1 = _mm256_cmpgt_epi32(query_last, self.firsts);
             let cmp2 = _mm256_cmpgt_epi32(self.lasts, query_first);
-            _mm256_movemask_epi8(_mm256_and_si256(cmp1, cmp2)) };
+            let cmp =_mm256_movemask_epi8(_mm256_and_si256(cmp1, cmp2));
+            transmute(cmp)
+         };
 
-        // could be made nicer with a macro perhaps?
-        let masks = [0xf, 0xf0, 0xf00, 0xf000, 0xf0000, 0xf00000, 0xf000000, 0xf000000];
+        let masks = [0xf, 0xf0, 0xf00, 0xf000, 0xf0000, 0xf00000, 0xf000000, 0xf0000000];
 
         // this is a bit slower
         // for (i, mask) in masks.iter().enumerate() {
@@ -429,12 +430,12 @@ impl<T, I> IntervalNode<T, I> where T: Clone, I: IntWithMax {
                 unsafe { _mm256_extract_epi32(self.firsts, 5) + 1 },
                 unsafe { _mm256_extract_epi32(self.lasts, 5) - 1 } );
         }
-        if cmp & masks[6] != 6 {
+        if cmp & masks[6] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 6) + 1 },
                 unsafe { _mm256_extract_epi32(self.lasts, 6) - 1 } );
         }
-        if cmp & masks[7] != 7 {
+        if cmp & masks[7] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 7) + 1 },
                 unsafe { _mm256_extract_epi32(self.lasts, 7) - 1 } );
@@ -615,10 +616,7 @@ impl<'a, T, I> Iterator for COITreeIterator<'a, T, I> where T: Clone, I: IntWith
             return None;
         }
 
-        dbg!((self.i, self.j));
-
         let node = &self.nodes[self.i];
-
         if self.j < 8 {
             let ret = Some(Interval{
                 first: node.first(self.j),
@@ -701,12 +699,12 @@ fn query_recursion<'a, T, I, F>(
             }
 
             node.query_chunk_metadata(firstv, lastv, |first_hit, last_hit, metadata| {
-                visit(Interval{first: first_hit, last: last_hit, metadata: metadata})
+                visit(Interval{first: first_hit, last: last_hit, metadata: metadata});
             });
         }
     } else {
         node.query_chunk_metadata(firstv, lastv, |first_hit, last_hit, metadata| {
-            visit(Interval{first: first_hit, last: last_hit, metadata: metadata})
+            visit(Interval{first: first_hit, last: last_hit, metadata: metadata});
         });
 
         if node.left < I::MAX {
@@ -902,7 +900,7 @@ impl<'a, T, I> SortedQuerent<'a, T, I> where T: Default + Copy + Clone, I: IntWi
 
             // add any interval that start in [prev_last+1, last]
             if self.prev_last < last {
-                let qa = self.prev_last+1;
+                let qa = self.prev_last+1 - 2; // -2 accounts for the adjustment made in the chunk
                 let qb = last;
 
                 let (qav, qbv) = unsafe {
