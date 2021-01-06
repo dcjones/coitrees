@@ -18,11 +18,25 @@ use std::marker::Copy;
 use std::convert::{TryInto, TryFrom};
 use std::fmt::Debug;
 use std::ops::{AddAssign, SubAssign};
+use std::cmp::{min, max};
+use std::mem::transmute;
+use std::arch::x86_64::{
+    __m256i,
+    _mm256_cmpgt_epi32,
+    _mm256_movemask_epi8,
+    _mm256_set1_epi32,
+    _mm256_set_epi32,
+    _mm256_and_si256,
+};
+
+
+type i32x8 = __m256i;
+
 
 // Small subtrees at the bottom of the tree are stored in sorted order
 // This gives the upper bound on the size of such subtrees. Performance isn't
 // super sensitive, but is worse with a very small or very large number.
-const SIMPLE_SUBTREE_CUTOFF: usize = 64;
+const SIMPLE_SUBTREE_CUTOFF: usize = 8;
 
 // Very dense subtrees in which we probably intersect most of the intervals
 // are more efficient to query linearly. When the expected proportion of hits
@@ -81,7 +95,7 @@ impl IntWithMax for u16 {
 ///
 /// # Examples
 /// ```
-/// use coitrees::IntervalNode;
+/// use coitrees::Interval;
 ///
 /// #[derive(Clone)]
 /// struct MyMetadata {
@@ -89,53 +103,129 @@ impl IntWithMax for u16 {
 ///     posstrand: bool
 /// }
 ///
-/// let some_interval = IntervalNode::<_, usize>::new(
+/// let some_interval = Interval::<_, usize>::new(
 ///     10, 24000, MyMetadata{chrom: String::from("chr1"), posstrand: false});
 ///
 /// assert_eq!(some_interval.len(), 23991);
 /// ```
+#[derive(Clone, Copy, Debug)]
+pub struct Interval<T> where T: Clone {
+    pub first: i32,
+    pub last: i32,
+    pub metadata: T
+}
+
+
+impl<T> Interval<T> where T: Clone {
+    pub fn len(&self) -> i32 {
+        return self.last - self.first + 1;
+    }
+}
+
+
+/// Node in the interval tree. Each node holds a chunk of 8 intervals.
 #[derive(Clone)]
-pub struct IntervalNode<T, I> where T: Clone, I: IntWithMax
+struct IntervalNode<T, I> where T: Clone, I: IntWithMax
  {
     // subtree interval
     subtree_last: i32,
 
-    // interval
-    pub first: i32,
-    pub last: i32,
+    // minimum first and maximum last
+    min_first: i32,
+    max_last: i32,
+
+    firsts: i32x8,
+    lasts: i32x8,
+    metadata: [T; 8],
 
     // when this is the root of a simple subtree, left == right is the size
     // of the subtree, otherwise they are left, right child pointers.
     left: I,
     right: I,
-
-    pub metadata: T,
 }
 
 
 impl<T, I> IntervalNode<T, I> where T: Clone, I: IntWithMax {
-    pub fn new(first: i32, last: i32, metadata: T) -> IntervalNode<T, I> {
-        return IntervalNode{
-            subtree_last: last,
-            first: first,
-            last: last,
-            left: I::MAX,
-            right: I::MAX,
-            metadata: metadata
-        };
+    fn new(intervals: &[Interval<T>; 8]) -> Self where T: Copy, {
+        assert!(intervals.len() > 0 && intervals.len() <= 8);
+
+        unsafe {
+            let mut min_first = intervals[0].first;
+            let mut max_last = intervals[0].last;
+            for interval in &intervals[1..] {
+                min_first = min(min_first, interval.first);
+                max_last = max(max_last, interval.last);
+            }
+
+            // the firsts and lasts are adjust by 1 here because AVX has an
+            // instruction for > but not >=.
+            let firsts =_mm256_set_epi32(
+                intervals[0].first - 1,
+                intervals[1].first - 1,
+                intervals[2].first - 1,
+                intervals[3].first - 1,
+                intervals[4].first - 1,
+                intervals[5].first - 1,
+                intervals[6].first - 1,
+                intervals[7].first - 1);
+
+            let lasts =_mm256_set_epi32(
+                intervals[0].last + 1,
+                intervals[1].last + 1,
+                intervals[2].last + 1,
+                intervals[3].last + 1,
+                intervals[4].last + 1,
+                intervals[5].last + 1,
+                intervals[6].last + 1,
+                intervals[7].last + 1);
+
+            let metadata: [T; 8] = [
+                intervals[0].metadata,
+                intervals[1].metadata,
+                intervals[2].metadata,
+                intervals[3].metadata,
+                intervals[4].metadata,
+                intervals[5].metadata,
+                intervals[6].metadata,
+                intervals[7].metadata ];
+
+            return Self {
+                min_first: min_first,
+                max_last: max_last,
+                subtree_last: max_last,
+                firsts: firsts,
+                lasts: lasts,
+                metadata: metadata,
+                left: I::MAX,
+                right: I::MAX,
+            }
+        }
     }
 
     /// Length spanned by the interval. (Interval are end-inclusive.)
     pub fn len(&self) -> i32 {
-        return (self.last - self.first + 1).max(0);
+        return (self.max_last - self.min_first + 1).max(0);
+    }
+
+
+    #[inline(always)]
+    fn query_count_chunk(&self, query_first: i32x8, query_last: i32x8) -> usize {
+        unsafe {
+            let cmp1 = _mm256_cmpgt_epi32(query_last, self.firsts);
+            let cmp2 = _mm256_cmpgt_epi32(self.lasts, query_first);
+            let cmp = _mm256_movemask_epi8(_mm256_and_si256(cmp1, cmp2));
+            let count = cmp.count_ones() / 4;
+
+            return count as usize;
+        }
     }
 }
 
 
 #[test]
 fn test_interval_len() {
-    fn make_interval(first: i32, last: i32) -> IntervalNode<(), u32> {
-        return IntervalNode::new(first, last, ());
+    fn make_interval(first: i32, last: i32) -> Interval<()> {
+        return Interval{first: first, last: last, metadata: ()};
     }
 
     assert_eq!(make_interval(1, -1).len(), 0);
@@ -158,11 +248,47 @@ pub struct COITree<T, I>  where T: Clone, I: IntWithMax {
 }
 
 
-impl<T, I> COITree<T, I> where T: Clone, I: IntWithMax {
-    pub fn new(nodes: Vec<IntervalNode<T, I>>) -> COITree<T, I> {
-        if nodes.len() >= (I::MAX).to_usize() {
+impl<T, I> COITree<T, I> where T: Default + Copy + Clone, I: IntWithMax {
+
+    fn chunk_intervals(intervals: Vec<Interval<T>>) -> Vec<IntervalNode<T, I>>
+            where T: Copy {
+        let n = intervals.len();
+        let num_chunks = (n / 8) + (n % 8 != 0) as usize;
+        let mut nodes: Vec<IntervalNode<T, I>> = Vec::with_capacity(num_chunks);
+
+        // chunk initializer
+        let mut chunk_init: [Interval<T>; 8] =
+            [Interval{first: i32::MAX, last: i32::MIN, metadata: T::default()}; 8];
+
+        for chunk in intervals.chunks(8) {
+            for (j, interval) in chunk.iter().enumerate() {
+                chunk_init[j] = *interval;
+            }
+
+            // pad the end if needed
+            for j in chunk.len()..8 {
+                chunk_init[j] = Interval {
+                    first: i32::MAX,
+                    last: i32::MIN,
+                    metadata: T::default()
+                };
+            }
+
+            nodes.push(IntervalNode::new(&chunk_init));
+        }
+
+        return nodes;
+    }
+
+
+    pub fn new(mut intervals: Vec<Interval<T>>) -> COITree<T, I> {
+        if intervals.len() >= (I::MAX).to_usize() {
             panic!("COITree construction failed: more intervals than index type can enumerate")
         }
+
+        intervals.sort_unstable_by_key(|interval| (interval.first, interval.last));
+        let nodes = Self::chunk_intervals(intervals);
+
 
         let (nodes, root_idx, height) = veb_order(nodes);
         return COITree { nodes: nodes, root_idx: root_idx, height: height };
@@ -178,183 +304,188 @@ impl<T, I> COITree<T, I> where T: Clone, I: IntWithMax {
         return self.nodes.is_empty();
     }
 
-    /// Find intervals in the set overlaping the query `[first, last]` and call `visit` on every overlapping node
-    pub fn query<'a, F>(&'a self, first: i32, last: i32, mut visit: F) where F: FnMut(&'a IntervalNode<T, I>) {
-        if !self.is_empty() {
-            query_recursion(&self.nodes, self.root_idx, first, last, &mut visit);
-        }
-    }
+    // /// Find intervals in the set overlaping the query `[first, last]` and call `visit` on every overlapping node
+    // pub fn query<'a, F>(&'a self, first: i32, last: i32, mut visit: F) where F: FnMut(&'a IntervalNode<T, I>) {
+    //     if !self.is_empty() {
+    //         query_recursion(&self.nodes, self.root_idx, first, last, &mut visit);
+    //     }
+    // }
 
     /// Count the number of intervals in the set overlapping the query `[first, last]`.
     pub fn query_count(&self, first: i32, last: i32) -> usize  {
+
+        let (firstv, lastv) = unsafe {
+            (_mm256_set1_epi32(first), _mm256_set1_epi32(last)) };
+
         if !self.is_empty() {
-            return query_recursion_count(&self.nodes, self.root_idx, first, last);
+            return query_recursion_count(&self.nodes, self.root_idx, first, last, firstv, lastv);
         } else {
             return 0;
         }
     }
 
-    /// Return a pair `(count, cov)`, where `count` gives the number of intervals
-    /// in the set overlapping the query, and `cov` the number of positions in the query
-    /// interval covered by at least one interval in the set.
-    pub fn coverage(&self, first: i32, last: i32) -> (usize, usize) {
-        assert!(last >= first);
+    // /// Return a pair `(count, cov)`, where `count` gives the number of intervals
+    // /// in the set overlapping the query, and `cov` the number of positions in the query
+    // /// interval covered by at least one interval in the set.
+    // pub fn coverage(&self, first: i32, last: i32) -> (usize, usize) {
+    //     assert!(last >= first);
 
-        if self.is_empty() {
-            return (0, 0);
-        }
+    //     if self.is_empty() {
+    //         return (0, 0);
+    //     }
 
-        let (mut uncov_len, last_cov, count) = coverage_recursion(
-            &self.nodes, self.root_idx, first, last, first - 1);
+    //     let (mut uncov_len, last_cov, count) = coverage_recursion(
+    //         &self.nodes, self.root_idx, first, last, first - 1);
 
-        if last_cov < last {
-            uncov_len += last - last_cov;
-        }
+    //     if last_cov < last {
+    //         uncov_len += last - last_cov;
+    //     }
 
-        let cov = ((last - first + 1) as usize) - (uncov_len as usize);
+    //     let cov = ((last - first + 1) as usize) - (uncov_len as usize);
 
-        return (count, cov);
-    }
+    //     return (count, cov);
+    // }
 
-    /// Iterate through the interval set in sorted order by interval start position.
-    pub fn iter(&self) -> COITreeIterator<T, I> {
-        let mut i = self.root_idx;
-        let mut stack: Vec<usize> = Vec::with_capacity(self.height);
-        while i < self.nodes.len() &&
-                self.nodes[i].left != I::MAX &&
-                self.nodes[i].left != self.nodes[i].right {
-            stack.push(i);
-            i = self.nodes[i].left.to_usize();
-        }
+    // /// Iterate through the interval set in sorted order by interval start position.
+    // pub fn iter(&self) -> COITreeIterator<T, I> {
+    //     let mut i = self.root_idx;
+    //     let mut stack: Vec<usize> = Vec::with_capacity(self.height);
+    //     while i < self.nodes.len() &&
+    //             self.nodes[i].left != I::MAX &&
+    //             self.nodes[i].left != self.nodes[i].right {
+    //         stack.push(i);
+    //         i = self.nodes[i].left.to_usize();
+    //     }
 
-        return COITreeIterator{
-            nodes: &self.nodes,
-            i: i,
-            count: 0,
-            stack: stack,
-        };
-    }
+    //     return COITreeIterator{
+    //         nodes: &self.nodes,
+    //         i: i,
+    //         count: 0,
+    //         stack: stack,
+    //     };
+    // }
 }
 
 
-impl<'a, T, I> IntoIterator for &'a COITree<T, I> where T: Clone, I: IntWithMax {
-    type Item = &'a IntervalNode<T, I>;
-    type IntoIter = COITreeIterator<'a, T, I>;
+// impl<'a, T, I> IntoIterator for &'a COITree<T, I> where T: Clone, I: IntWithMax {
+//     type Item = &'a IntervalNode<T, I>;
+//     type IntoIter = COITreeIterator<'a, T, I>;
 
-    fn into_iter(self) -> COITreeIterator<'a, T, I> {
-        return self.iter();
-    }
-}
-
-
-/// Iterate through nodes in a tree in sorted order by interval start position.
-pub struct COITreeIterator<'a, T, I> where T: Clone, I: IntWithMax {
-    nodes: &'a Vec<IntervalNode<T, I>>,
-    i: usize, // current node
-    count: usize, // number generated so far
-    stack: Vec<usize>,
-}
+//     fn into_iter(self) -> COITreeIterator<'a, T, I> {
+//         return self.iter();
+//     }
+// }
 
 
-impl<'a, T, I> Iterator for COITreeIterator<'a, T, I> where T: Clone, I: IntWithMax {
-    type Item = &'a IntervalNode<T, I>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.i >= self.nodes.len() {
-            return None;
-        }
-
-        let node = &self.nodes[self.i];
-
-        if node.left == node.right { // simple node
-            if node.left.to_usize() > 1 {
-                self.i += 1;
-            } else {
-                if let Some(i) = self.stack.pop() {
-                    self.i = i;
-                } else {
-                    self.i = usize::MAX;
-                }
-            }
-        } else {
-            if node.right == I::MAX {
-                if let Some(i) = self.stack.pop() {
-                    self.i = i;
-                } else {
-                    self.i = usize::MAX;
-                }
-            } else {
-                let mut i = node.right.to_usize();
-
-                while self.nodes[i].left != I::MAX
-                        && self.nodes[i].left != self.nodes[i].right {
-                    self.stack.push(i);
-                    i = self.nodes[i].left.to_usize();
-                }
-
-                self.i = i;
-            }
-        }
-
-        self.count += 1;
-        return Some(node);
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let len = self.nodes.len() - self.count;
-        return (len, Some(len));
-    }
-}
+// /// Iterate through nodes in a tree in sorted order by interval start position.
+// pub struct COITreeIterator<'a, T, I> where T: Clone, I: IntWithMax {
+//     nodes: &'a Vec<IntervalNode<T, I>>,
+//     i: usize, // current node
+//     count: usize, // number generated so far
+//     stack: Vec<usize>,
+// }
 
 
-impl<'a, T, I> ExactSizeIterator for COITreeIterator<'a, T, I> where T: Clone, I: IntWithMax {
-    fn len(&self) -> usize {
-        return self.nodes.len() - self.count;
-    }
-}
+// impl<'a, T, I> Iterator for COITreeIterator<'a, T, I> where T: Clone, I: IntWithMax {
+//     type Item = &'a IntervalNode<T, I>;
+
+//     fn next(&mut self) -> Option<Self::Item> {
+//         if self.i >= self.nodes.len() {
+//             return None;
+//         }
+
+//         let node = &self.nodes[self.i];
+
+//         if node.left == node.right { // simple node
+//             if node.left.to_usize() > 1 {
+//                 self.i += 1;
+//             } else {
+//                 if let Some(i) = self.stack.pop() {
+//                     self.i = i;
+//                 } else {
+//                     self.i = usize::MAX;
+//                 }
+//             }
+//         } else {
+//             if node.right == I::MAX {
+//                 if let Some(i) = self.stack.pop() {
+//                     self.i = i;
+//                 } else {
+//                     self.i = usize::MAX;
+//                 }
+//             } else {
+//                 let mut i = node.right.to_usize();
+
+//                 while self.nodes[i].left != I::MAX
+//                         && self.nodes[i].left != self.nodes[i].right {
+//                     self.stack.push(i);
+//                     i = self.nodes[i].left.to_usize();
+//                 }
+
+//                 self.i = i;
+//             }
+//         }
+
+//         self.count += 1;
+//         return Some(node);
+//     }
+
+//     fn size_hint(&self) -> (usize, Option<usize>) {
+//         let len = self.nodes.len() - self.count;
+//         return (len, Some(len));
+//     }
+// }
 
 
-// Recursively count overlaps between the tree specified by `nodes` and a
-// query interval specified by `first`, `last`.
-fn query_recursion<'a, T, I, F>(
-        nodes: &'a [IntervalNode<T, I>], root_idx: usize, first: i32, last: i32,
-        visit: &mut F) where T: Clone, I: IntWithMax, F: FnMut(&'a IntervalNode<T, I>) {
+// impl<'a, T, I> ExactSizeIterator for COITreeIterator<'a, T, I> where T: Clone, I: IntWithMax {
+//     fn len(&self) -> usize {
+//         return self.nodes.len() - self.count;
+//     }
+// }
 
-    let node = &nodes[root_idx];
 
-    if node.left == node.right { // simple subtree
-        for node in &nodes[root_idx..root_idx + node.right.to_usize()] {
-            if last < node.first {
-                break;
-            } else if first <= node.last {
-                visit(node);
-            }
-        }
-    } else {
-        if overlaps(node.first, node.last, first, last) {
-            visit(node);
-        }
+// // Recursively count overlaps between the tree specified by `nodes` and a
+// // query interval specified by `first`, `last`.
+// fn query_recursion<'a, T, I, F>(
+//         nodes: &'a [IntervalNode<T, I>], root_idx: usize, first: i32, last: i32,
+//         visit: &mut F) where T: Clone, I: IntWithMax, F: FnMut(&'a IntervalNode<T, I>) {
 
-        if node.left < I::MAX {
-            let left = node.left.to_usize();
-            if nodes[left].subtree_last >= first {
-                query_recursion(nodes, left, first, last, visit);
-            }
-        }
+//     let node = &nodes[root_idx];
 
-        if node.right < I::MAX {
-            let right = node.right.to_usize();
-            if overlaps(node.first, nodes[right].subtree_last, first, last) {
-                query_recursion(nodes, right, first, last, visit);
-            }
-        }
-    }
-}
+//     if node.left == node.right { // simple subtree
+//         for node in &nodes[root_idx..root_idx + node.right.to_usize()] {
+//             if last < node.first {
+//                 break;
+//             } else if first <= node.last {
+//                 visit(node);
+//             }
+//         }
+//     } else {
+//         if overlaps(node.first, node.last, first, last) {
+//             visit(node);
+//         }
+
+//         if node.left < I::MAX {
+//             let left = node.left.to_usize();
+//             if nodes[left].subtree_last >= first {
+//                 query_recursion(nodes, left, first, last, visit);
+//             }
+//         }
+
+//         if node.right < I::MAX {
+//             let right = node.right.to_usize();
+//             if overlaps(node.first, nodes[right].subtree_last, first, last) {
+//                 query_recursion(nodes, right, first, last, visit);
+//             }
+//         }
+//     }
+// }
 
 
 // query_recursion but just count number of overlaps
 fn query_recursion_count<T, I>(
-        nodes: &[IntervalNode<T, I>], root_idx: usize, first: i32, last: i32) -> usize
+        nodes: &[IntervalNode<T, I>], root_idx: usize,
+        first: i32, last: i32, firstv: i32x8, lastv: i32x8) -> usize
             where T: Clone, I: IntWithMax {
 
     let node = &nodes[root_idx];
@@ -362,30 +493,28 @@ fn query_recursion_count<T, I>(
     if node.left == node.right { // simple subtree
         let mut count = 0;
         for node in &nodes[root_idx..root_idx + node.right.to_usize()] {
-            if last < node.first {
+            if last < node.min_first {
                 break;
-            } else if first <= node.last {
-                count += 1;
+            } else {
+                count += node.query_count_chunk(firstv, lastv);
             }
         }
         return count;
     } else {
         let mut count = 0;
-        if overlaps(node.first, node.last, first, last) {
-            count += 1;
-        }
+        count += node.query_count_chunk(firstv, lastv);
 
         if node.left < I::MAX {
             let left = node.left.to_usize();
             if nodes[left].subtree_last >= first {
-                count += query_recursion_count(nodes, left, first, last);
+                count += query_recursion_count(nodes, left, first, last, firstv, lastv);
             }
         }
 
         if node.right < I::MAX {
             let right = node.right.to_usize();
-            if overlaps(node.first, nodes[right].subtree_last, first, last) {
-                count += query_recursion_count(nodes, right, first, last);
+            if overlaps(node.min_first, nodes[right].subtree_last, first, last) {
+                count += query_recursion_count(nodes, right, first, last, firstv, lastv);
             }
         }
 
@@ -394,185 +523,185 @@ fn query_recursion_count<T, I>(
 }
 
 
-fn coverage_recursion<T, I>(
-        nodes: &[IntervalNode<T, I>], root_idx: usize,
-        first: i32, last: i32, mut last_cov: i32) -> (i32, i32, usize)
-        where T: Clone, I: IntWithMax {
+// fn coverage_recursion<T, I>(
+//         nodes: &[IntervalNode<T, I>], root_idx: usize,
+//         first: i32, last: i32, mut last_cov: i32) -> (i32, i32, usize)
+//         where T: Clone, I: IntWithMax {
 
-    let node = &nodes[root_idx];
+//     let node = &nodes[root_idx];
 
-    if node.left == node.right { // simple subtree
-        let mut count = 0;
-        let mut uncov_len = 0;
-        for node in &nodes[root_idx..root_idx + node.right.to_usize()] {
-            if overlaps(node.first, node.last, first, last) {
-                if node.first > last_cov {
-                    uncov_len += node.first - (last_cov + 1);
-                }
-                last_cov = last_cov.max(node.last);
-                count += 1;
-            }
-        }
-        return (uncov_len, last_cov, count);
-    } else {
-        let mut uncov_len = 0;
-        let mut count = 0;
+//     if node.left == node.right { // simple subtree
+//         let mut count = 0;
+//         let mut uncov_len = 0;
+//         for node in &nodes[root_idx..root_idx + node.right.to_usize()] {
+//             if overlaps(node.first, node.last, first, last) {
+//                 if node.first > last_cov {
+//                     uncov_len += node.first - (last_cov + 1);
+//                 }
+//                 last_cov = last_cov.max(node.last);
+//                 count += 1;
+//             }
+//         }
+//         return (uncov_len, last_cov, count);
+//     } else {
+//         let mut uncov_len = 0;
+//         let mut count = 0;
 
-        if node.left < I::MAX {
-            let left = node.left.to_usize();
-            if nodes[left].subtree_last >= first {
-                let (left_uncov_len, left_last_cov, left_count) =
-                    coverage_recursion(nodes, left, first, last, last_cov);
-                last_cov = left_last_cov;
-                uncov_len += left_uncov_len;
-                count += left_count;
-            }
-        }
+//         if node.left < I::MAX {
+//             let left = node.left.to_usize();
+//             if nodes[left].subtree_last >= first {
+//                 let (left_uncov_len, left_last_cov, left_count) =
+//                     coverage_recursion(nodes, left, first, last, last_cov);
+//                 last_cov = left_last_cov;
+//                 uncov_len += left_uncov_len;
+//                 count += left_count;
+//             }
+//         }
 
-        if overlaps(node.first, node.last, first, last) {
-            if node.first > last_cov {
-                uncov_len += node.first - (last_cov + 1);
-            }
-            last_cov = last_cov.max(node.last);
-            count += 1;
-        }
+//         if overlaps(node.first, node.last, first, last) {
+//             if node.first > last_cov {
+//                 uncov_len += node.first - (last_cov + 1);
+//             }
+//             last_cov = last_cov.max(node.last);
+//             count += 1;
+//         }
 
-        if node.right < I::MAX {
-            let right = node.right.to_usize();
-            if overlaps(node.first, nodes[right].subtree_last, first, last) {
-                let (right_uncov_len, right_last_cov, right_count) =
-                    coverage_recursion(nodes, right, first, last, last_cov);
-                last_cov = right_last_cov;
-                uncov_len += right_uncov_len;
-                count += right_count;
-            }
-        }
+//         if node.right < I::MAX {
+//             let right = node.right.to_usize();
+//             if overlaps(node.first, nodes[right].subtree_last, first, last) {
+//                 let (right_uncov_len, right_last_cov, right_count) =
+//                     coverage_recursion(nodes, right, first, last, last_cov);
+//                 last_cov = right_last_cov;
+//                 uncov_len += right_uncov_len;
+//                 count += right_count;
+//             }
+//         }
 
-        return (uncov_len, last_cov, count);
-    }
-}
-
-
-/// An alternative query strategy that can be much faster when queries are performed
-/// in sorted order and overlap.
-///
-/// Unilke `COITree::query`, some state is retained between queries.
-/// `SortedQuerent` tracks that state. If queries are not sorted or don't
-/// overlap, this strategy still works, but is slightly slower than
-/// `COITree::query`.
-pub struct SortedQuerent<'a, T, I> where T: Clone, I: IntWithMax {
-    tree: &'a COITree<T, I>,
-    prev_first: i32,
-    prev_last: i32,
-    overlapping_intervals: Vec<&'a IntervalNode<T, I>>,
-}
+//         return (uncov_len, last_cov, count);
+//     }
+// }
 
 
-impl<'a, T, I> SortedQuerent<'a, T, I> where T: Clone, I: IntWithMax {
-    /// Construct a new `SortedQuerent` to perform a sequence. queries.
-    pub fn new(tree: &'a COITree<T, I>) -> SortedQuerent<'a, T, I> {
-        let overlapping_intervals: Vec<&IntervalNode<T, I>> = Vec::new();
-        return SortedQuerent {
-            tree: tree,
-            prev_first: -1,
-            prev_last: -1,
-            overlapping_intervals: overlapping_intervals,
-        };
-    }
-
-    /// Find intervals in the underlying `COITree` that overlap the query
-    /// `[first, last]` and call `visit` on each. Works equivalently to
-    /// `COITrees::query` but queries that overlap prior queries will potentially
-    /// be faster.
-    pub fn query<F>(&mut self, first: i32, last: i32, mut visit: F) where F: FnMut(&IntervalNode<T, I>) {
-
-        if self.tree.is_empty() {
-            return;
-        }
-
-        // not overlaping or preceding
-        if first < self.prev_first || first > self.prev_last {
-            // no overlap with previous query. have to resort to regular query strategy
-            self.overlapping_intervals.clear();
-            self.tree.query(first, last, |node| self.overlapping_intervals.push(node));
-        } else {
-            // successor query, exploit the overlap
-
-            // delete previously overlapping intervals with end in [prev_first, first-1]
-            if self.prev_first < first {
-                let mut i = 0;
-                while i < self.overlapping_intervals.len() {
-                    if self.overlapping_intervals[i].last < first {
-                        self.overlapping_intervals.swap_remove(i);
-                    } else {
-                        i += 1;
-                    }
-                }
-            }
-
-            // delete previously overlapping intervals with start in [last+1, prev_end]
-            if self.prev_last > last {
-                let mut i = 0;
-                while i < self.overlapping_intervals.len() {
-                    if self.overlapping_intervals[i].first > last {
-                        self.overlapping_intervals.swap_remove(i);
-                    } else {
-                        i += 1;
-                    }
-                }
-            }
-
-            // add any interval that start in [prev_last+1, last]
-            if self.prev_last < last {
-                sorted_querent_query_firsts(
-                    &self.tree.nodes, self.tree.root_idx,
-                    self.prev_last+1, last, &mut self.overlapping_intervals);
-            }
-        }
-
-        // call visit on everything
-        for overlapping_interval in &self.overlapping_intervals {
-            visit(overlapping_interval);
-        }
-
-        self.prev_first = first;
-        self.prev_last = last;
-    }
-}
+// /// An alternative query strategy that can be much faster when queries are performed
+// /// in sorted order and overlap.
+// ///
+// /// Unilke `COITree::query`, some state is retained between queries.
+// /// `SortedQuerent` tracks that state. If queries are not sorted or don't
+// /// overlap, this strategy still works, but is slightly slower than
+// /// `COITree::query`.
+// pub struct SortedQuerent<'a, T, I> where T: Clone, I: IntWithMax {
+//     tree: &'a COITree<T, I>,
+//     prev_first: i32,
+//     prev_last: i32,
+//     overlapping_intervals: Vec<&'a IntervalNode<T, I>>,
+// }
 
 
-// find any intervals in the tree with their first value in [first, last]
-fn sorted_querent_query_firsts<'a, T, I>(
-        nodes: &'a [IntervalNode<T, I>], root_idx: usize, first: i32, last: i32,
-        overlapping_intervals: &mut Vec<&'a IntervalNode<T, I>>) where T: Clone, I: IntWithMax {
+// impl<'a, T, I> SortedQuerent<'a, T, I> where T: Clone, I: IntWithMax {
+//     /// Construct a new `SortedQuerent` to perform a sequence. queries.
+//     pub fn new(tree: &'a COITree<T, I>) -> SortedQuerent<'a, T, I> {
+//         let overlapping_intervals: Vec<&IntervalNode<T, I>> = Vec::new();
+//         return SortedQuerent {
+//             tree: tree,
+//             prev_first: -1,
+//             prev_last: -1,
+//             overlapping_intervals: overlapping_intervals,
+//         };
+//     }
 
-    let node = &nodes[root_idx];
+//     /// Find intervals in the underlying `COITree` that overlap the query
+//     /// `[first, last]` and call `visit` on each. Works equivalently to
+//     /// `COITrees::query` but queries that overlap prior queries will potentially
+//     /// be faster.
+//     pub fn query<F>(&mut self, first: i32, last: i32, mut visit: F) where F: FnMut(&IntervalNode<T, I>) {
 
-    if node.left == node.right { // simple subtree
-        for node in &nodes[root_idx..root_idx + node.right.to_usize()] {
-            if last < node.first {
-                break;
-            } else if first <= node.first {
-                overlapping_intervals.push(node);
-            }
-        }
-    }
-    else {
-        if first <= node.first && node.first <= last {
-            overlapping_intervals.push(node);
-        }
+//         if self.tree.is_empty() {
+//             return;
+//         }
 
-        if node.left < I::MAX && first <= node.first {
-            let left = node.left.to_usize();
-            sorted_querent_query_firsts(nodes, left, first, last, overlapping_intervals);
-        }
+//         // not overlaping or preceding
+//         if first < self.prev_first || first > self.prev_last {
+//             // no overlap with previous query. have to resort to regular query strategy
+//             self.overlapping_intervals.clear();
+//             self.tree.query(first, last, |node| self.overlapping_intervals.push(node));
+//         } else {
+//             // successor query, exploit the overlap
 
-        if node.right < I::MAX && last >= node.first {
-            let right = node.right.to_usize();
-            sorted_querent_query_firsts(nodes, right, first, last, overlapping_intervals);
-        }
-    }
-}
+//             // delete previously overlapping intervals with end in [prev_first, first-1]
+//             if self.prev_first < first {
+//                 let mut i = 0;
+//                 while i < self.overlapping_intervals.len() {
+//                     if self.overlapping_intervals[i].last < first {
+//                         self.overlapping_intervals.swap_remove(i);
+//                     } else {
+//                         i += 1;
+//                     }
+//                 }
+//             }
+
+//             // delete previously overlapping intervals with start in [last+1, prev_end]
+//             if self.prev_last > last {
+//                 let mut i = 0;
+//                 while i < self.overlapping_intervals.len() {
+//                     if self.overlapping_intervals[i].first > last {
+//                         self.overlapping_intervals.swap_remove(i);
+//                     } else {
+//                         i += 1;
+//                     }
+//                 }
+//             }
+
+//             // add any interval that start in [prev_last+1, last]
+//             if self.prev_last < last {
+//                 sorted_querent_query_firsts(
+//                     &self.tree.nodes, self.tree.root_idx,
+//                     self.prev_last+1, last, &mut self.overlapping_intervals);
+//             }
+//         }
+
+//         // call visit on everything
+//         for overlapping_interval in &self.overlapping_intervals {
+//             visit(overlapping_interval);
+//         }
+
+//         self.prev_first = first;
+//         self.prev_last = last;
+//     }
+// }
+
+
+// // find any intervals in the tree with their first value in [first, last]
+// fn sorted_querent_query_firsts<'a, T, I>(
+//         nodes: &'a [IntervalNode<T, I>], root_idx: usize, first: i32, last: i32,
+//         overlapping_intervals: &mut Vec<&'a IntervalNode<T, I>>) where T: Clone, I: IntWithMax {
+
+//     let node = &nodes[root_idx];
+
+//     if node.left == node.right { // simple subtree
+//         for node in &nodes[root_idx..root_idx + node.right.to_usize()] {
+//             if last < node.first {
+//                 break;
+//             } else if first <= node.first {
+//                 overlapping_intervals.push(node);
+//             }
+//         }
+//     }
+//     else {
+//         if first <= node.first && node.first <= last {
+//             overlapping_intervals.push(node);
+//         }
+
+//         if node.left < I::MAX && first <= node.first {
+//             let left = node.left.to_usize();
+//             sorted_querent_query_firsts(nodes, left, first, last, overlapping_intervals);
+//         }
+
+//         if node.right < I::MAX && last >= node.first {
+//             let right = node.right.to_usize();
+//             sorted_querent_query_firsts(nodes, right, first, last, overlapping_intervals);
+//         }
+//     }
+// }
 
 
 // True iff the two intervals overlap.
@@ -646,7 +775,7 @@ fn traverse_recursion<T, I>(
     info[root_idx].parent = parent;
     *preorder += 1;
 
-    let mut subtree_first = nodes[root_idx].first;
+    let mut subtree_first = nodes[root_idx].min_first;
 
     let mut left_expected_hits = 0.0;
     let mut left_subtree_span = 0;
@@ -693,7 +822,7 @@ fn traverse_recursion<T, I>(
     debug_assert!(right_subtree_span <= subtree_span);
 
     let expected_hits =
-        ((nodes[root_idx].last - nodes[root_idx].first + 1) as f32 +
+        ((nodes[root_idx].max_last - nodes[root_idx].min_first + 1) as f32 +
         (left_subtree_span as f32) * left_expected_hits +
         (right_subtree_span as f32) * right_expected_hits) / subtree_span as f32;
 
@@ -768,9 +897,6 @@ fn veb_order<T, I>(mut nodes: Vec<IntervalNode<T, I>>) -> (Vec<IntervalNode<T, I
     if veb_nodes.is_empty() {
         return (veb_nodes, 0, 0);
     }
-
-    nodes.sort_unstable_by_key(|node| (node.first, node.last));
-    // eprintln!("sorting nodes: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
     // let now = Instant::now();
     let mut info = traverse(&mut nodes);

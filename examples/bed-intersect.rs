@@ -5,7 +5,8 @@ use std::time::Instant;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::ffi::CString;
-use coitrees::{COITree, IntervalNode, SortedQuerent};
+// use coitrees::{COITree, IntervalNode, SortedQuerent};
+use coitrees::{COITree, Interval};
 
 extern crate fnv;
 use fnv::FnvHashMap;
@@ -69,7 +70,7 @@ fn parse_bed_line(line: &[u8]) -> (&str, i32, i32) {
 
 // Read a bed file into a COITree
 fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<(), u32>>, GenericError> {
-    let mut nodes = FnvHashMap::<String, Vec<IntervalNode<(), u32>>>::default();
+    let mut nodes = FnvHashMap::<String, Vec<Interval<()>>>::default();
 
     let now = Instant::now();
 
@@ -87,7 +88,7 @@ fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<(), u32>>, Gen
             nodes.entry(seqname.to_string()).or_insert(Vec::new())
         };
 
-        node_arr.push(IntervalNode::new(first, last, ()));
+        node_arr.push(Interval{first: first, last: last, metadata: ()});
 
         line_count += 1;
         line.clear();
@@ -109,7 +110,7 @@ fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<(), u32>>, Gen
 
 
 fn read_bed_file_numbered(path: &str) -> Result<FnvHashMap<String, COITree<usize, u32>>, GenericError> {
-    let mut nodes = FnvHashMap::<String, Vec<IntervalNode<usize, u32>>>::default();
+    let mut nodes = FnvHashMap::<String, Vec<Interval<usize>>>::default();
 
     let now = Instant::now();
 
@@ -127,7 +128,7 @@ fn read_bed_file_numbered(path: &str) -> Result<FnvHashMap<String, COITree<usize
             nodes.entry(seqname.to_string()).or_insert(Vec::new())
         };
 
-        node_arr.push(IntervalNode::new(first, last, node_arr.len()));
+        node_arr.push(Interval{first: first, last: last, metadata: node_arr.len()});
 
         line_count += 1;
         line.clear();
@@ -198,139 +199,139 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
 }
 
 
-fn query_bed_files_tvt(filename_a: &str, filename_b: &str) -> Result<(), GenericError> {
-    let a_trees = read_bed_file(filename_a)?;
-    let b_trees = read_bed_file_numbered(filename_b)?;
+// fn query_bed_files_tvt(filename_a: &str, filename_b: &str) -> Result<(), GenericError> {
+//     let a_trees = read_bed_file(filename_a)?;
+//     let b_trees = read_bed_file_numbered(filename_b)?;
 
-    let mut a_querents = FnvHashMap::<String, SortedQuerent<(), u32>>::default();
-    for (seqname, a_tree) in &a_trees {
-        a_querents.insert(seqname.clone(), SortedQuerent::new(a_tree));
-    }
+//     let mut a_querents = FnvHashMap::<String, SortedQuerent<(), u32>>::default();
+//     for (seqname, a_tree) in &a_trees {
+//         a_querents.insert(seqname.clone(), SortedQuerent::new(a_tree));
+//     }
 
-    let mut total_count = 0;
-    for (seqname, b_tree) in &b_trees {
-        if let Some(a_querent) = a_querents.get_mut(seqname) {
-            let c_seqname = CString::new(seqname.clone()).expect("CString::new failed");
+//     let mut total_count = 0;
+//     for (seqname, b_tree) in &b_trees {
+//         if let Some(a_querent) = a_querents.get_mut(seqname) {
+//             let c_seqname = CString::new(seqname.clone()).expect("CString::new failed");
 
-            for b_node in b_tree {
-                let mut count = 0;
-                a_querent.query(b_node.first, b_node.last, |_| count += 1);
-                total_count += count;
+//             for b_node in b_tree {
+//                 let mut count = 0;
+//                 a_querent.query(b_node.first, b_node.last, |_| count += 1);
+//                 total_count += count;
 
-                unsafe {
-                    libc::printf(
-                        b"%s\t%d\t%d\t%u\n\0".as_ptr() as *const i8,
-                        c_seqname.as_bytes_with_nul().as_ptr() as *const i8,
-                        b_node.first,
-                        b_node.last,
-                        count as u32);
-                }
-            }
-        }
-    }
+//                 unsafe {
+//                     libc::printf(
+//                         b"%s\t%d\t%d\t%u\n\0".as_ptr() as *const i8,
+//                         c_seqname.as_bytes_with_nul().as_ptr() as *const i8,
+//                         b_node.first,
+//                         b_node.last,
+//                         count as u32);
+//                 }
+//             }
+//         }
+//     }
 
-    eprintln!("total overlaps: {}", total_count);
+//     eprintln!("total overlaps: {}", total_count);
 
-    return Ok(());
-}
-
-
-fn query_bed_files_coverage(filename_a: &str, filename_b: &str) -> Result<(), GenericError> {
-    let tree = read_bed_file(filename_a)?;
-
-    let file = File::open(filename_b)?;
-    let mut rdr = BufReader::new(file);
-    let mut line = Vec::new();
-
-    let mut total_count: usize = 0;
-    let now = Instant::now();
-
-    // let stdout = io::stdout();
-    // let mut out = stdout.lock();
-
-    while rdr.read_until(b'\n', &mut line).unwrap() > 0 {
-        let (seqname, first, last) =
-            parse_bed_line(&line);
-
-        let mut cov: usize = 0;
-        let mut count: usize = 0;
-
-        if let Some(seqname_tree) = tree.get(seqname) {
-            let countcov = seqname_tree.coverage(first, last);
-            count = countcov.0;
-            cov = countcov.1;
-        }
-
-        // out.write(&line[..line.len()-1])?;
-        // writeln!(out, "\t{}", count)?;
-
-        // unfortunately printing in c is quite a bit faster than rust
-        unsafe {
-            let linelen = line.len();
-            line[linelen-1] = b'\0';
-            libc::printf(
-                b"%s\t%u\t%u\n\0".as_ptr() as *const i8,
-                line.as_ptr() as *const i8,
-                count as u32,
-                cov);
-        }
-
-        total_count += count;
-
-        line.clear();
-    }
-
-    eprintln!("overlap: {}s", now.elapsed().as_millis() as f64 / 1000.0);
-    eprintln!("total overlaps: {}", total_count);
-
-    return Ok(());
-}
+//     return Ok(());
+// }
 
 
-fn query_bed_files_with_sorted_querent(filename_a: &str, filename_b: &str) -> Result<(), GenericError> {
-    let trees = read_bed_file(filename_a)?;
+// fn query_bed_files_coverage(filename_a: &str, filename_b: &str) -> Result<(), GenericError> {
+//     let tree = read_bed_file(filename_a)?;
 
-    let file = File::open(filename_b)?;
-    let mut rdr = BufReader::new(file);
-    let mut line = Vec::new();
+//     let file = File::open(filename_b)?;
+//     let mut rdr = BufReader::new(file);
+//     let mut line = Vec::new();
 
-    let mut total_count: usize = 0;
-    let now = Instant::now();
+//     let mut total_count: usize = 0;
+//     let now = Instant::now();
 
-    let mut querents = FnvHashMap::<String, SortedQuerent<(), u32>>::default();
-    for (seqname, tree) in &trees {
-        querents.insert(seqname.clone(), SortedQuerent::new(tree));
-    }
+//     // let stdout = io::stdout();
+//     // let mut out = stdout.lock();
 
-    while rdr.read_until(b'\n', &mut line).unwrap() > 0 {
-        let (seqname, first, last) =
-            parse_bed_line(&line);
+//     while rdr.read_until(b'\n', &mut line).unwrap() > 0 {
+//         let (seqname, first, last) =
+//             parse_bed_line(&line);
 
-        let mut count: usize = 0;
-        if let Some(querent) = querents.get_mut(seqname) {
-            querent.query(first, last, |_| count += 1);
-        }
+//         let mut cov: usize = 0;
+//         let mut count: usize = 0;
 
-        // unfortunately printing in c is quite a bit faster than rust
-        unsafe {
-            let linelen = line.len();
-            line[linelen-1] = b'\0';
-            libc::printf(
-                b"%s\t%u\n\0".as_ptr() as *const i8,
-                line.as_ptr() as *const i8,
-                count as u32);
-        }
+//         if let Some(seqname_tree) = tree.get(seqname) {
+//             let countcov = seqname_tree.coverage(first, last);
+//             count = countcov.0;
+//             cov = countcov.1;
+//         }
 
-        total_count += count;
+//         // out.write(&line[..line.len()-1])?;
+//         // writeln!(out, "\t{}", count)?;
 
-        line.clear();
-    }
+//         // unfortunately printing in c is quite a bit faster than rust
+//         unsafe {
+//             let linelen = line.len();
+//             line[linelen-1] = b'\0';
+//             libc::printf(
+//                 b"%s\t%u\t%u\n\0".as_ptr() as *const i8,
+//                 line.as_ptr() as *const i8,
+//                 count as u32,
+//                 cov);
+//         }
 
-    eprintln!("overlap: {}s", now.elapsed().as_millis() as f64 / 1000.0);
-    eprintln!("total overlaps: {}", total_count);
+//         total_count += count;
 
-    return Ok(());
-}
+//         line.clear();
+//     }
+
+//     eprintln!("overlap: {}s", now.elapsed().as_millis() as f64 / 1000.0);
+//     eprintln!("total overlaps: {}", total_count);
+
+//     return Ok(());
+// }
+
+
+// fn query_bed_files_with_sorted_querent(filename_a: &str, filename_b: &str) -> Result<(), GenericError> {
+//     let trees = read_bed_file(filename_a)?;
+
+//     let file = File::open(filename_b)?;
+//     let mut rdr = BufReader::new(file);
+//     let mut line = Vec::new();
+
+//     let mut total_count: usize = 0;
+//     let now = Instant::now();
+
+//     let mut querents = FnvHashMap::<String, SortedQuerent<(), u32>>::default();
+//     for (seqname, tree) in &trees {
+//         querents.insert(seqname.clone(), SortedQuerent::new(tree));
+//     }
+
+//     while rdr.read_until(b'\n', &mut line).unwrap() > 0 {
+//         let (seqname, first, last) =
+//             parse_bed_line(&line);
+
+//         let mut count: usize = 0;
+//         if let Some(querent) = querents.get_mut(seqname) {
+//             querent.query(first, last, |_| count += 1);
+//         }
+
+//         // unfortunately printing in c is quite a bit faster than rust
+//         unsafe {
+//             let linelen = line.len();
+//             line[linelen-1] = b'\0';
+//             libc::printf(
+//                 b"%s\t%u\n\0".as_ptr() as *const i8,
+//                 line.as_ptr() as *const i8,
+//                 count as u32);
+//         }
+
+//         total_count += count;
+
+//         line.clear();
+//     }
+
+//     eprintln!("overlap: {}s", now.elapsed().as_millis() as f64 / 1000.0);
+//     eprintln!("total overlaps: {}", total_count);
+
+//     return Ok(());
+// }
 
 
 fn main() {
@@ -364,15 +365,15 @@ fn main() {
     let input2 = matches.value_of("input2").unwrap();
 
     let result;
-    if matches.is_present("coverage") {
-        result = query_bed_files_coverage(input1, input2);
-    } else if matches.is_present("use_sorted_querent") {
-        result = query_bed_files_with_sorted_querent(input1, input2);
-    } else if matches.is_present("tree_vs_tree") {
-        result = query_bed_files_tvt(input1, input2);
-    } else {
+    // if matches.is_present("coverage") {
+    //     result = query_bed_files_coverage(input1, input2);
+    // } else if matches.is_present("use_sorted_querent") {
+    //     result = query_bed_files_with_sorted_querent(input1, input2);
+    // } else if matches.is_present("tree_vs_tree") {
+    //     result = query_bed_files_tvt(input1, input2);
+    // } else {
         result = query_bed_files(input1, input2);
-    }
+    // }
 
     if let Err(err) = result {
         println!("error: {}", err)
