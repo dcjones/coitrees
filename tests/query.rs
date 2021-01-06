@@ -1,5 +1,5 @@
 
-use coitrees::{COITree, IntWithMax, IntervalNode, SortedQuerent};
+use coitrees::{COITree, IntWithMax, Interval, SortedQuerent};
 
 extern crate rand;
 use rand::{Rng, thread_rng};
@@ -14,9 +14,9 @@ fn overlaps(first_a: i32, last_a: i32, first_b: i32, last_b: i32) -> bool {
 
 // Find overlapping intervals by simply checking every single one.
 // We test against this algorithm which we assume to be correct.
-fn brute_force_query<T, I, F>(
-        intervals: &[IntervalNode<T, I>], query_first: i32, query_last: i32, mut visit: F)
-            where T: Copy, I: IntWithMax, F: FnMut(&IntervalNode<T, I>) {
+fn brute_force_query<T, F>(
+        intervals: &[Interval<T>], query_first: i32, query_last: i32, mut visit: F)
+            where T: Copy, F: FnMut(&Interval<T>) {
     for interval in intervals {
         if overlaps(interval.first, interval.last, query_first, query_last) {
             visit(interval);
@@ -26,9 +26,9 @@ fn brute_force_query<T, I, F>(
 
 
 // Brute coverage calculation. `intervals` must be sorted.
-fn brute_force_coverage<T, I>(
-        intervals: &[IntervalNode<T, I>], query_first: i32, query_last: i32) -> (usize, usize)
-            where T: Copy, I: IntWithMax {
+fn brute_force_coverage<T>(
+        intervals: &[Interval<T>], query_first: i32, query_last: i32) -> (usize, usize)
+            where T: Copy {
     let mut last_cov = query_first - 1;
     let mut uncov_len = 0;
     let mut count = 0;
@@ -52,7 +52,7 @@ fn brute_force_coverage<T, I>(
 
 // Run queries against both a COITree and by brute force and check that
 // they get the same results.
-fn check_queries<I>(a: &COITree<u32, I>, b: &[IntervalNode<u32, I>], queries: &mut [(i32, i32)]) where I: IntWithMax {
+fn check_queries<I>(a: &COITree<u32, I>, b: &[Interval<u32>], queries: &mut [(i32, i32)]) where I: IntWithMax {
     let mut a_hits: Vec<u32> = Vec::new();
     let mut b_hits: Vec<u32> = Vec::new();
 
@@ -61,7 +61,7 @@ fn check_queries<I>(a: &COITree<u32, I>, b: &[IntervalNode<u32, I>], queries: &m
         b_hits.clear();
 
         a.query(*query_first, *query_last, |node| {
-            a_hits.push(node.metadata)
+            a_hits.push(*node.metadata)
         });
 
         brute_force_query(b, *query_first, *query_last, |node| {
@@ -76,7 +76,7 @@ fn check_queries<I>(a: &COITree<u32, I>, b: &[IntervalNode<u32, I>], queries: &m
 }
 
 
-fn check_coverage<I>(a: &COITree<u32, I>, b: &[IntervalNode<u32, I>], queries: &mut [(i32, i32)]) where I: IntWithMax {
+fn check_coverage<I>(a: &COITree<u32, I>, b: &[Interval<u32>], queries: &mut [(i32, i32)]) where I: IntWithMax {
     for (query_first, query_last) in queries {
         let (a_count, a_cover) = a.coverage(*query_first, *query_last);
         let (b_count, b_cover) = brute_force_coverage(b, *query_first, *query_last);
@@ -87,7 +87,7 @@ fn check_coverage<I>(a: &COITree<u32, I>, b: &[IntervalNode<u32, I>], queries: &
 }
 
 
-fn check_count_queries<I>(a: &COITree<u32, I>, b: &[IntervalNode<u32, I>], queries: &mut [(i32, i32)]) where I: IntWithMax {
+fn check_count_queries<I>(a: &COITree<u32, I>, b: &[Interval<u32>], queries: &mut [(i32, i32)]) where I: IntWithMax {
     for (query_first, query_last) in queries {
         let a_cnt = a.query_count(*query_first, *query_last);
 
@@ -103,7 +103,7 @@ fn check_count_queries<I>(a: &COITree<u32, I>, b: &[IntervalNode<u32, I>], queri
 
 // check SortedQuerent queries against brute force
 fn check_sorted_querent_queries<I>(
-        a: &COITree<u32, I>, b: &[IntervalNode<u32, I>], queries: &mut [(i32, i32)]) where I: IntWithMax {
+        a: &COITree<u32, I>, b: &[Interval<u32>], queries: &mut [(i32, i32)]) where I: IntWithMax {
     let mut a_hits: Vec<u32> = Vec::new();
     let mut b_hits: Vec<u32> = Vec::new();
 
@@ -116,7 +116,7 @@ fn check_sorted_querent_queries<I>(
         b_hits.clear();
 
         qa.query(*query_first, *query_last, |node| {
-            a_hits.push(node.metadata)
+            a_hits.push(*node.metadata)
         });
 
         brute_force_query(b, *query_first, *query_last, |node| {
@@ -133,7 +133,7 @@ fn check_sorted_querent_queries<I>(
 
 // check that SortedQuerent still works even when queries are unsorted
 fn check_sorted_querent_unsorted_queries<I>(
-        a: &COITree<u32, I>, b: &[IntervalNode<u32, I>], queries: &mut [(i32, i32)]) where I: IntWithMax {
+        a: &COITree<u32, I>, b: &[Interval<u32>], queries: &mut [(i32, i32)]) where I: IntWithMax {
     let mut a_hits: Vec<u32> = Vec::new();
     let mut b_hits: Vec<u32> = Vec::new();
 
@@ -144,7 +144,7 @@ fn check_sorted_querent_unsorted_queries<I>(
         b_hits.clear();
 
         qa.query(*query_first, *query_last, |node| {
-            a_hits.push(node.metadata)
+            a_hits.push(*node.metadata)
         });
 
         brute_force_query(b, *query_first, *query_last, |node| {
@@ -172,13 +172,13 @@ fn check_random_queries<I, F>(
         min_len: i32, max_len: i32,
         query_min_len: i32, query_max_len: i32,
         check: F)
-        where I: IntWithMax, F: Fn(&COITree<u32, I>, &[IntervalNode<u32, I>], &mut [(i32, i32)]) {
+        where I: IntWithMax, F: Fn(&COITree<u32, I>, &[Interval<u32>], &mut [(i32, i32)]) {
     let min_first = 0;
 
-    let mut b: Vec<IntervalNode<u32, I>> = Vec::with_capacity(n);
+    let mut b: Vec<Interval<u32>> = Vec::with_capacity(n);
     for i in 0..n {
         let (first, last) = random_interval(min_first, max_last, min_len, max_len);
-        b.push(IntervalNode::new(first, last, i as u32));
+        b.push(Interval{first: first, last: last, metadata: i as u32});
     }
     b.sort_unstable_by_key(|node| node.first);
 
@@ -194,7 +194,7 @@ fn check_random_queries<I, F>(
 
 
 fn check_random_queries_default<I, F>(n: usize, num_queries: usize, check: F)
-        where I: IntWithMax, F: Fn(&COITree<u32, I>, &[IntervalNode<u32, I>], &mut [(i32, i32)]) {
+        where I: IntWithMax, F: Fn(&COITree<u32, I>, &[Interval<u32>], &mut [(i32, i32)]) {
 
     let max_last = 1000000;
     let min_len = 20;
@@ -205,7 +205,7 @@ fn check_random_queries_default<I, F>(n: usize, num_queries: usize, check: F)
 }
 
 
-const CHECKS: [fn(&COITree<u32, usize>, &[IntervalNode<u32, usize>], &mut [(i32, i32)]); 4] =
+const CHECKS: [fn(&COITree<u32, usize>, &[Interval<u32>], &mut [(i32, i32)]); 4] =
     [
         check_queries,
         check_count_queries,
@@ -260,7 +260,7 @@ fn query_empty_intervals() {
 }
 
 
-const CHECKS_U16: [fn(&COITree<u32, u16>, &[IntervalNode<u32, u16>], &mut [(i32, i32)]); 4] =
+const CHECKS_U16: [fn(&COITree<u32, u16>, &[Interval<u32>], &mut [(i32, i32)]); 4] =
     [
         check_queries,
         check_count_queries,
@@ -289,10 +289,10 @@ fn index_type_overflow() {
     // indexed.
 
     let n = u16::MAX as usize;
-    let mut b: Vec<IntervalNode<u32, u16>> = Vec::with_capacity(n);
+    let mut b: Vec<Interval<u32>> = Vec::with_capacity(n);
     for i in 0..n {
         let (first, last) = random_interval(0, 10000, 10, 100);
-        b.push(IntervalNode::new(first, last, i as u32));
+        b.push(Interval{first: first, last: last, metadata: i as u32});
     }
 
     let _tree: COITree<u32, u16> = COITree::new(b);

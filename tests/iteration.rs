@@ -1,5 +1,5 @@
 
-use coitrees::{COITree, IntervalNode};
+use coitrees::{COITree, Interval};
 
 extern crate rand;
 use rand::{Rng, thread_rng};
@@ -13,17 +13,17 @@ fn random_interval(min_first: i32, max_last: i32, min_len: i32, max_len: i32) ->
 }
 
 fn check_iteration(n: usize) {
-    let mut b: Vec<IntervalNode<usize, usize>> = Vec::with_capacity(n);
+    let mut b: Vec<Interval<usize>> = Vec::with_capacity(n);
     let min_first = 0;
     let max_last = 10000000;
     let min_len = 1;
     let max_len = 10000;
     for i in 0..n {
         let (first, last) = random_interval(min_first, max_last, min_len, max_len);
-        b.push(IntervalNode::new(first, last, i as usize));
+        b.push(Interval{first: first, last: last, metadata: i as usize});
     }
 
-    let a = COITree::new(b.clone());
+    let a: COITree<usize, usize> = COITree::new(b.clone());
 
     // check that intervals are sorted and that every value is generated
     let mut last_first = i32::min_value();
@@ -31,7 +31,7 @@ fn check_iteration(n: usize) {
     for node in &a {
         assert!(last_first <= node.first);
         last_first = node.first;
-        seen.insert(node.metadata);
+        seen.insert(*node.metadata);
     }
     assert_eq!(seen.len(), n);
 }

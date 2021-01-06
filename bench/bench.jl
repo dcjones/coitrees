@@ -8,7 +8,7 @@ function main()
 
     random_methods = Dict(
         "coitrees"      => "./coitrees",
-        # "coitrees --tree-vs-tree" => "./coitrees-tvt",
+        "coitrees --tree-vs-tree" => "./coitrees-tvt",
         # "cgranges `-c`" => "./cgranges",
         # "CITree"        => "./CITree",
         # "AIList"        => "./AIList",
@@ -23,7 +23,7 @@ function main()
         "B_" => joinpath(pwd(), "test3.ucsc.bed"))
 
     sorted_methods = copy(random_methods)
-    # sorted_methods["coitrees (`--sorted`)"] = "./coitrees-sorted"
+    sorted_methods["coitrees (`--sorted`)"] = "./coitrees-sorted"
     # sorted_methods["bedtools (`-sorted`)"] = "./bedtools-sorted"
 
     tests = [("A", "B"), ("B", "A"), ("A", "A"), ("B_", "B_")]
