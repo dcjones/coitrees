@@ -8,8 +8,8 @@ function main()
 
     random_methods = Dict(
         "coitrees"      => "./coitrees-cov",
-        "cgranges"      => "./cgranges-cov",
-        "CITree"        => "./CITree-cov",
+        # "cgranges"      => "./cgranges-cov",
+        # "CITree"        => "./CITree-cov",
     )
 
     sorted_test_filenames = Dict(

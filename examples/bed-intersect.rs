@@ -236,56 +236,56 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
 // }
 
 
-// fn query_bed_files_coverage(filename_a: &str, filename_b: &str) -> Result<(), GenericError> {
-//     let tree = read_bed_file(filename_a)?;
+fn query_bed_files_coverage(filename_a: &str, filename_b: &str) -> Result<(), GenericError> {
+    let tree = read_bed_file(filename_a)?;
 
-//     let file = File::open(filename_b)?;
-//     let mut rdr = BufReader::new(file);
-//     let mut line = Vec::new();
+    let file = File::open(filename_b)?;
+    let mut rdr = BufReader::new(file);
+    let mut line = Vec::new();
 
-//     let mut total_count: usize = 0;
-//     let now = Instant::now();
+    let mut total_count: usize = 0;
+    let now = Instant::now();
 
-//     // let stdout = io::stdout();
-//     // let mut out = stdout.lock();
+    // let stdout = io::stdout();
+    // let mut out = stdout.lock();
 
-//     while rdr.read_until(b'\n', &mut line).unwrap() > 0 {
-//         let (seqname, first, last) =
-//             parse_bed_line(&line);
+    while rdr.read_until(b'\n', &mut line).unwrap() > 0 {
+        let (seqname, first, last) =
+            parse_bed_line(&line);
 
-//         let mut cov: usize = 0;
-//         let mut count: usize = 0;
+        let mut cov: usize = 0;
+        let mut count: usize = 0;
 
-//         if let Some(seqname_tree) = tree.get(seqname) {
-//             let countcov = seqname_tree.coverage(first, last);
-//             count = countcov.0;
-//             cov = countcov.1;
-//         }
+        if let Some(seqname_tree) = tree.get(seqname) {
+            let countcov = seqname_tree.coverage(first, last);
+            count = countcov.0;
+            cov = countcov.1;
+        }
 
-//         // out.write(&line[..line.len()-1])?;
-//         // writeln!(out, "\t{}", count)?;
+        // out.write(&line[..line.len()-1])?;
+        // writeln!(out, "\t{}", count)?;
 
-//         // unfortunately printing in c is quite a bit faster than rust
-//         unsafe {
-//             let linelen = line.len();
-//             line[linelen-1] = b'\0';
-//             libc::printf(
-//                 b"%s\t%u\t%u\n\0".as_ptr() as *const i8,
-//                 line.as_ptr() as *const i8,
-//                 count as u32,
-//                 cov);
-//         }
+        // unfortunately printing in c is quite a bit faster than rust
+        unsafe {
+            let linelen = line.len();
+            line[linelen-1] = b'\0';
+            libc::printf(
+                b"%s\t%u\t%u\n\0".as_ptr() as *const i8,
+                line.as_ptr() as *const i8,
+                count as u32,
+                cov);
+        }
 
-//         total_count += count;
+        total_count += count;
 
-//         line.clear();
-//     }
+        line.clear();
+    }
 
-//     eprintln!("overlap: {}s", now.elapsed().as_millis() as f64 / 1000.0);
-//     eprintln!("total overlaps: {}", total_count);
+    eprintln!("overlap: {}s", now.elapsed().as_millis() as f64 / 1000.0);
+    eprintln!("total overlaps: {}", total_count);
 
-//     return Ok(());
-// }
+    return Ok(());
+}
 
 
 // fn query_bed_files_with_sorted_querent(filename_a: &str, filename_b: &str) -> Result<(), GenericError> {
@@ -365,15 +365,15 @@ fn main() {
     let input2 = matches.value_of("input2").unwrap();
 
     let result;
-    // if matches.is_present("coverage") {
-    //     result = query_bed_files_coverage(input1, input2);
+    if matches.is_present("coverage") {
+        result = query_bed_files_coverage(input1, input2);
     // } else if matches.is_present("use_sorted_querent") {
     //     result = query_bed_files_with_sorted_querent(input1, input2);
     // } else if matches.is_present("tree_vs_tree") {
     //     result = query_bed_files_tvt(input1, input2);
-    // } else {
+    } else {
         result = query_bed_files(input1, input2);
-    // }
+    }
 
     if let Err(err) = result {
         println!("error: {}", err)

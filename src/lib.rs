@@ -236,6 +236,58 @@ impl<T, I> IntervalNode<T, I> where T: Clone, I: IntWithMax {
             return count as usize;
         }
     }
+
+    fn query_chunk<F>(&self, query_first: i32x8, query_last: i32x8, mut visit: F)
+            where F: FnMut(i32, i32) {
+
+        let cmp = unsafe {
+            let cmp1 = _mm256_cmpgt_epi32(query_last, self.firsts);
+            let cmp2 = _mm256_cmpgt_epi32(self.lasts, query_first);
+            _mm256_movemask_epi8(_mm256_and_si256(cmp1, cmp2)) };
+
+        // could be made nicer with a macro perhaps?
+        let masks = [0xf, 0xf0, 0xf00, 0xf000, 0xf0000, 0xf00000, 0xf000000, 0xf000000];
+        if cmp & masks[0] != 0 {
+            visit(
+                unsafe { _mm256_extract_epi32(self.firsts, 0) },
+                unsafe { _mm256_extract_epi32(self.lasts, 0) } );
+        }
+        if cmp & masks[1] != 0 {
+            visit(
+                unsafe { _mm256_extract_epi32(self.firsts, 1) },
+                unsafe { _mm256_extract_epi32(self.lasts, 1) } );
+        }
+        if cmp & masks[2] != 0 {
+            visit(
+                unsafe { _mm256_extract_epi32(self.firsts, 2) },
+                unsafe { _mm256_extract_epi32(self.lasts, 2) } );
+        }
+        if cmp & masks[3] != 0 {
+            visit(
+                unsafe { _mm256_extract_epi32(self.firsts, 3) },
+                unsafe { _mm256_extract_epi32(self.lasts, 3) } );
+        }
+        if cmp & masks[4] != 0 {
+            visit(
+                unsafe { _mm256_extract_epi32(self.firsts, 4) },
+                unsafe { _mm256_extract_epi32(self.lasts, 4) } );
+        }
+        if cmp & masks[5] != 0 {
+            visit(
+                unsafe { _mm256_extract_epi32(self.firsts, 5) },
+                unsafe { _mm256_extract_epi32(self.lasts, 5) } );
+        }
+        if cmp & masks[6] != 6 {
+            visit(
+                unsafe { _mm256_extract_epi32(self.firsts, 6) },
+                unsafe { _mm256_extract_epi32(self.lasts, 6) } );
+        }
+        if cmp & masks[7] != 7 {
+            visit(
+                unsafe { _mm256_extract_epi32(self.firsts, 7) },
+                unsafe { _mm256_extract_epi32(self.lasts, 7) } );
+        }
+    }
 }
 
 
@@ -341,27 +393,30 @@ impl<T, I> COITree<T, I> where T: Default + Copy + Clone, I: IntWithMax {
         }
     }
 
-    // /// Return a pair `(count, cov)`, where `count` gives the number of intervals
-    // /// in the set overlapping the query, and `cov` the number of positions in the query
-    // /// interval covered by at least one interval in the set.
-    // pub fn coverage(&self, first: i32, last: i32) -> (usize, usize) {
-    //     assert!(last >= first);
+    /// Return a pair `(count, cov)`, where `count` gives the number of intervals
+    /// in the set overlapping the query, and `cov` the number of positions in the query
+    /// interval covered by at least one interval in the set.
+    pub fn coverage(&self, first: i32, last: i32) -> (usize, usize) {
+        assert!(last >= first);
 
-    //     if self.is_empty() {
-    //         return (0, 0);
-    //     }
+        if self.is_empty() {
+            return (0, 0);
+        }
 
-    //     let (mut uncov_len, last_cov, count) = coverage_recursion(
-    //         &self.nodes, self.root_idx, first, last, first - 1);
+        let (firstv, lastv) = unsafe {
+            (_mm256_set1_epi32(first), _mm256_set1_epi32(last)) };
 
-    //     if last_cov < last {
-    //         uncov_len += last - last_cov;
-    //     }
+        let (mut uncov_len, last_cov, count) = coverage_recursion(
+            &self.nodes, self.root_idx, first, last, firstv, lastv, first - 1);
 
-    //     let cov = ((last - first + 1) as usize) - (uncov_len as usize);
+        if last_cov < last {
+            uncov_len += last - last_cov;
+        }
 
-    //     return (count, cov);
-    // }
+        let cov = ((last - first + 1) as usize) - (uncov_len as usize);
+
+        return (count, cov);
+    }
 
     // /// Iterate through the interval set in sorted order by interval start position.
     // pub fn iter(&self) -> COITreeIterator<T, I> {
@@ -540,63 +595,67 @@ fn query_recursion_count<T, I>(
 }
 
 
-// fn coverage_recursion<T, I>(
-//         nodes: &[IntervalNode<T, I>], root_idx: usize,
-//         first: i32, last: i32, mut last_cov: i32) -> (i32, i32, usize)
-//         where T: Clone, I: IntWithMax {
+fn coverage_recursion<T, I>(
+        nodes: &[IntervalNode<T, I>], root_idx: usize,
+        first: i32, last: i32, firstv: i32x8, lastv: i32x8, mut last_cov: i32) -> (i32, i32, usize)
+        where T: Clone, I: IntWithMax {
 
-//     let node = &nodes[root_idx];
+    let node = &nodes[root_idx];
 
-//     if node.left == node.right { // simple subtree
-//         let mut count = 0;
-//         let mut uncov_len = 0;
-//         for node in &nodes[root_idx..root_idx + node.right.to_usize()] {
-//             if overlaps(node.first, node.last, first, last) {
-//                 if node.first > last_cov {
-//                     uncov_len += node.first - (last_cov + 1);
-//                 }
-//                 last_cov = last_cov.max(node.last);
-//                 count += 1;
-//             }
-//         }
-//         return (uncov_len, last_cov, count);
-//     } else {
-//         let mut uncov_len = 0;
-//         let mut count = 0;
+    if node.left == node.right { // simple subtree
+        let mut count = 0;
+        let mut uncov_len = 0;
+        for node in &nodes[root_idx..root_idx + node.right.to_usize()] {
+            if last < node.min_first() {
+                break;
+            }
 
-//         if node.left < I::MAX {
-//             let left = node.left.to_usize();
-//             if nodes[left].subtree_last >= first {
-//                 let (left_uncov_len, left_last_cov, left_count) =
-//                     coverage_recursion(nodes, left, first, last, last_cov);
-//                 last_cov = left_last_cov;
-//                 uncov_len += left_uncov_len;
-//                 count += left_count;
-//             }
-//         }
+            node.query_chunk(firstv, lastv, |first_hit, last_hit| {
+                if first_hit > last_cov {
+                    uncov_len += first_hit - (last_cov + 1);
+                }
+                last_cov = last_cov.max(last_hit);
+                count += 1;
+            });
+        }
+        return (uncov_len, last_cov, count);
+    } else {
+        let mut uncov_len = 0;
+        let mut count = 0;
 
-//         if overlaps(node.first, node.last, first, last) {
-//             if node.first > last_cov {
-//                 uncov_len += node.first - (last_cov + 1);
-//             }
-//             last_cov = last_cov.max(node.last);
-//             count += 1;
-//         }
+        if node.left < I::MAX {
+            let left = node.left.to_usize();
+            if nodes[left].subtree_last >= first {
+                let (left_uncov_len, left_last_cov, left_count) =
+                    coverage_recursion(nodes, left, first, last, firstv, lastv, last_cov);
+                last_cov = left_last_cov;
+                uncov_len += left_uncov_len;
+                count += left_count;
+            }
+        }
 
-//         if node.right < I::MAX {
-//             let right = node.right.to_usize();
-//             if overlaps(node.first, nodes[right].subtree_last, first, last) {
-//                 let (right_uncov_len, right_last_cov, right_count) =
-//                     coverage_recursion(nodes, right, first, last, last_cov);
-//                 last_cov = right_last_cov;
-//                 uncov_len += right_uncov_len;
-//                 count += right_count;
-//             }
-//         }
+        node.query_chunk(firstv, lastv, |first_hit, last_hit| {
+            if first_hit > last_cov {
+                uncov_len += first_hit - (last_cov + 1);
+            }
+            last_cov = last_cov.max(last_hit);
+            count += 1;
+        });
 
-//         return (uncov_len, last_cov, count);
-//     }
-// }
+        if node.right < I::MAX {
+            let right = node.right.to_usize();
+            if overlaps(node.min_first(), nodes[right].subtree_last, first, last) {
+                let (right_uncov_len, right_last_cov, right_count) =
+                    coverage_recursion(nodes, right, first, last, firstv, lastv, last_cov);
+                last_cov = right_last_cov;
+                uncov_len += right_uncov_len;
+                count += right_count;
+            }
+        }
+
+        return (uncov_len, last_cov, count);
+    }
+}
 
 
 // /// An alternative query strategy that can be much faster when queries are performed
