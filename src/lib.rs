@@ -615,6 +615,8 @@ impl<'a, T, I> Iterator for COITreeIterator<'a, T, I> where T: Clone, I: IntWith
             return None;
         }
 
+        dbg!((self.i, self.j));
+
         let node = &self.nodes[self.i];
 
         if self.j < 8 {
