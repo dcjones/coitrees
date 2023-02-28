@@ -1,4 +1,4 @@
 #!/bin/sh
 
-cd ~/src/cgranges/test/3rd-party/AIList
-./AIList $2 $1
+cd ~/src/cgranges/test/3rd-party/AIList || exit
+./AIList "$2" "$1"

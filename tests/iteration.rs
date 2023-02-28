@@ -1,15 +1,14 @@
-
 use coitrees::{COITree, IntervalNode};
 
 extern crate rand;
-use rand::{Rng, thread_rng};
+use rand::{thread_rng, Rng};
 use std::collections::HashSet;
 
 fn random_interval(min_first: i32, max_last: i32, min_len: i32, max_len: i32) -> (i32, i32) {
     let mut rng = thread_rng();
-    let len = rng.gen_range(min_len, max_len+1);
-    let start = rng.gen_range(min_first, max_last - len + 1);
-    return (start, start+len-1)
+    let len = rng.gen_range(min_len..max_len + 1);
+    let start = rng.gen_range(min_first..max_last - len + 1);
+    (start, start + len - 1)
 }
 
 fn check_iteration(n: usize) {
@@ -20,7 +19,7 @@ fn check_iteration(n: usize) {
     let max_len = 10000;
     for i in 0..n {
         let (first, last) = random_interval(min_first, max_last, min_len, max_len);
-        b.push(IntervalNode::new(first, last, i as usize));
+        b.push(IntervalNode::new(first, last, i));
     }
 
     let a = COITree::new(b.clone());
@@ -36,15 +35,12 @@ fn check_iteration(n: usize) {
     assert_eq!(seen.len(), n);
 }
 
-
 #[test]
 fn check_iteration_empty() {
     check_iteration(0);
 }
 
-
 #[test]
 fn check_iteration_medium() {
     check_iteration(10000);
 }
-
