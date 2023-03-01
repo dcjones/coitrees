@@ -1,4 +1,3 @@
-
 //! # COITrees
 //! `coitrees` implements a fast static interval tree data structure with genomic
 //! data in mind.
@@ -14,25 +13,20 @@
 //! through the intermediary `SortedQuerenty` which keeps track of some state
 //! to accelerate overlaping queries.
 
-use std::marker::Copy;
-use std::convert::{TryInto, TryFrom};
-use std::fmt::Debug;
-use std::ops::{AddAssign, SubAssign};
-use std::cmp::max;
-use std::mem::transmute;
 use std::arch::x86_64::{
-    __m256i,
-    _mm256_and_si256,
-    _mm256_cmpgt_epi32,
-    _mm256_extract_epi32,
-    _mm256_movemask_epi8,
-    _mm256_set1_epi32,
-    _mm256_set_epi32
+    __m256i, _mm256_and_si256, _mm256_cmpgt_epi32, _mm256_extract_epi32, _mm256_movemask_epi8,
+    _mm256_set1_epi32, _mm256_set_epi32,
 };
+
+use std::cmp::{max, Ordering};
+use std::convert::{TryFrom, TryInto};
+use std::fmt::Debug;
+use std::marker::Copy;
+use std::mem::transmute;
+use std::ops::{AddAssign, SubAssign};
 
 #[allow(non_camel_case_types)]
 type i32x8 = __m256i;
-
 
 // Small subtrees at the bottom of the tree are stored in sorted order
 // This gives the upper bound on the size of such subtrees. Performance isn't
@@ -44,9 +38,10 @@ const SIMPLE_SUBTREE_CUTOFF: usize = 8;
 // is a above this number it becomes a simple subtree.
 const SIMPLE_SUBTREE_DENSITY_CUTOFF: f32 = 0.2;
 
-
 /// A trait facilitating COITree index types.
-pub trait IntWithMax: TryInto<usize> + TryFrom<usize> + Copy + Default + PartialEq + Ord + AddAssign + SubAssign {
+pub trait IntWithMax:
+    TryInto<usize> + TryFrom<usize> + Copy + Default + PartialEq + Ord + AddAssign + SubAssign
+{
     const MAX: Self;
 
     // typically the branch here should be optimized out, because we are
@@ -54,21 +49,21 @@ pub trait IntWithMax: TryInto<usize> + TryFrom<usize> + Copy + Default + Partial
     #[inline(always)]
     fn to_usize(self) -> usize {
         match self.try_into() {
-            Ok(x) => return x,
-            Err(_) => panic!("index conversion to usize failed")
+            Ok(x) => x,
+            Err(_) => panic!("index conversion to usize failed"),
         }
     }
 
     #[inline(always)]
     fn from_usize(x: usize) -> Self {
         match x.try_into() {
-            Ok(y) => return y,
-            Err(_) => panic!("index conversion from usize failed")
+            Ok(y) => y,
+            Err(_) => panic!("index conversion from usize failed"),
         }
     }
 
     fn one() -> Self {
-        return Self::from_usize(1);
+        Self::from_usize(1)
     }
 }
 
@@ -80,11 +75,9 @@ impl IntWithMax for u32 {
     const MAX: u32 = u32::MAX;
 }
 
-
 impl IntWithMax for u16 {
     const MAX: u16 = u16::MAX;
 }
-
 
 /// An interval with associated metadata.
 ///
@@ -111,24 +104,36 @@ impl IntWithMax for u16 {
 /// assert_eq!(some_interval.len(), 23991);
 /// ```
 #[derive(Clone, Copy, Debug)]
-pub struct Interval<T> where T: Clone {
+pub struct Interval<T>
+where
+    T: Clone,
+{
     pub first: i32,
     pub last: i32,
-    pub metadata: T
+    pub metadata: T,
 }
 
-
-impl<T> Interval<T> where T: Clone {
+impl<T> Interval<T>
+where
+    T: Clone,
+{
     pub fn len(&self) -> i32 {
-        return max(0, self.last - self.first + 1);
+        max(0, self.last - self.first + 1)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
-
 
 #[test]
 fn test_interval_len() {
     fn make_interval(first: i32, last: i32) -> Interval<()> {
-        return Interval{first: first, last: last, metadata: ()};
+        Interval {
+            first,
+            last,
+            metadata: (),
+        }
     }
 
     assert_eq!(make_interval(1, -1).len(), 0);
@@ -137,11 +142,13 @@ fn test_interval_len() {
     assert_eq!(make_interval(1, 2).len(), 2);
 }
 
-
 /// Node in the interval tree. Each node holds a chunk of 8 intervals.
 #[derive(Clone)]
-struct IntervalNode<T, I> where T: Clone, I: IntWithMax
- {
+struct IntervalNode<T, I>
+where
+    T: Clone,
+    I: IntWithMax,
+{
     // subtree interval
     subtree_last: i32,
 
@@ -155,10 +162,16 @@ struct IntervalNode<T, I> where T: Clone, I: IntWithMax
     right: I,
 }
 
-
-impl<T, I> IntervalNode<T, I> where T: Clone, I: IntWithMax {
-    fn new(intervals: &[Interval<T>; 8]) -> Self where T: Copy {
-        assert!(intervals.len() > 0 && intervals.len() <= 8);
+impl<T, I> IntervalNode<T, I>
+where
+    T: Clone,
+    I: IntWithMax,
+{
+    fn new(intervals: &[Interval<T>; 8]) -> Self
+    where
+        T: Copy,
+    {
+        assert!(!intervals.is_empty() && intervals.len() <= 8);
 
         unsafe {
             let mut max_last = intervals[0].last;
@@ -168,7 +181,7 @@ impl<T, I> IntervalNode<T, I> where T: Clone, I: IntWithMax {
 
             // the firsts and lasts are adjust by 1 here because AVX has an
             // instruction for > but not >=.
-            let firsts =_mm256_set_epi32(
+            let firsts = _mm256_set_epi32(
                 intervals[7].first - 1,
                 intervals[6].first - 1,
                 intervals[5].first - 1,
@@ -176,9 +189,10 @@ impl<T, I> IntervalNode<T, I> where T: Clone, I: IntWithMax {
                 intervals[3].first - 1,
                 intervals[2].first - 1,
                 intervals[1].first - 1,
-                intervals[0].first - 1);
+                intervals[0].first - 1,
+            );
 
-            let lasts =_mm256_set_epi32(
+            let lasts = _mm256_set_epi32(
                 intervals[7].last + 1,
                 intervals[6].last + 1,
                 intervals[5].last + 1,
@@ -186,7 +200,8 @@ impl<T, I> IntervalNode<T, I> where T: Clone, I: IntWithMax {
                 intervals[3].last + 1,
                 intervals[2].last + 1,
                 intervals[1].last + 1,
-                intervals[0].last + 1);
+                intervals[0].last + 1,
+            );
 
             let metadata: [T; 8] = [
                 intervals[0].metadata,
@@ -196,56 +211,61 @@ impl<T, I> IntervalNode<T, I> where T: Clone, I: IntWithMax {
                 intervals[4].metadata,
                 intervals[5].metadata,
                 intervals[6].metadata,
-                intervals[7].metadata ];
+                intervals[7].metadata,
+            ];
 
-            return Self {
+            Self {
                 subtree_last: max_last,
-                firsts: firsts,
-                lasts: lasts,
-                metadata: metadata,
+                firsts,
+                lasts,
+                metadata,
                 left: I::MAX,
                 right: I::MAX,
             }
         }
     }
 
-
     fn first(&self, i: usize) -> i32 {
         assert!(i < 8);
-        return unsafe { transmute::<&i32x8, &[i32; 8]>(&self.firsts) }[i];
+        (unsafe { transmute::<&i32x8, &[i32; 8]>(&self.firsts) }[i])
     }
-
 
     fn last(&self, i: usize) -> i32 {
         assert!(i < 8);
-        return unsafe { transmute::<&i32x8, &[i32; 8]>(&self.lasts) }[i];
+        (unsafe { transmute::<&i32x8, &[i32; 8]>(&self.lasts) }[i])
     }
 
-
     fn min_first(&self) -> i32 {
-        return unsafe {
-            _mm256_extract_epi32(self.firsts, 0) + 1
-        };
+        unsafe { _mm256_extract_epi32(self.firsts, 0) + 1 }
     }
 
     fn max_last(&self) -> i32 {
         // faster ways to do this, but doesn't really matter
-        let m = unsafe { max(
-            max(max(
-                _mm256_extract_epi32(self.lasts, 0),
-                _mm256_extract_epi32(self.lasts, 1)),
+        unsafe {
             max(
-                _mm256_extract_epi32(self.lasts, 2),
-                _mm256_extract_epi32(self.lasts, 3))),
-            max(max(
-                _mm256_extract_epi32(self.lasts, 4),
-                _mm256_extract_epi32(self.lasts, 5)),
-            max(
-                _mm256_extract_epi32(self.lasts, 6),
-                _mm256_extract_epi32(self.lasts, 7)))) - 1 };
-        return m;
+                max(
+                    max(
+                        _mm256_extract_epi32(self.lasts, 0),
+                        _mm256_extract_epi32(self.lasts, 1),
+                    ),
+                    max(
+                        _mm256_extract_epi32(self.lasts, 2),
+                        _mm256_extract_epi32(self.lasts, 3),
+                    ),
+                ),
+                max(
+                    max(
+                        _mm256_extract_epi32(self.lasts, 4),
+                        _mm256_extract_epi32(self.lasts, 5),
+                    ),
+                    max(
+                        _mm256_extract_epi32(self.lasts, 6),
+                        _mm256_extract_epi32(self.lasts, 7),
+                    ),
+                ),
+            ) - 1
+        }
     }
-
 
     #[inline(always)]
     fn query_count_chunk(&self, query_first: i32x8, query_last: i32x8) -> usize {
@@ -255,143 +275,169 @@ impl<T, I> IntervalNode<T, I> where T: Clone, I: IntWithMax {
             let cmp = _mm256_movemask_epi8(_mm256_and_si256(cmp1, cmp2));
             let count = cmp.count_ones() / 4;
 
-            return count as usize;
+            count as usize
         }
     }
 
     fn query_chunk_firsts<'a, F>(&'a self, query_first: i32x8, query_last: i32x8, mut visit: F)
-            where F: FnMut(i32, i32, &'a T) {
+    where
+        F: FnMut(i32, i32, &'a T),
+    {
         let cmp: u32 = unsafe {
             let cmp1 = _mm256_cmpgt_epi32(query_last, self.firsts);
             let cmp2 = _mm256_cmpgt_epi32(self.firsts, query_first);
-            let cmp =_mm256_movemask_epi8(_mm256_and_si256(cmp1, cmp2));
+            let cmp = _mm256_movemask_epi8(_mm256_and_si256(cmp1, cmp2));
             transmute(cmp)
-         };
+        };
 
-        let masks = [0xf, 0xf0, 0xf00, 0xf000, 0xf0000, 0xf00000, 0xf000000, 0xf0000000];
+        let masks = [
+            0xf, 0xf0, 0xf00, 0xf000, 0xf0000, 0xf00000, 0xf000000, 0xf0000000,
+        ];
         if cmp & masks[0] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 0) + 1 },
                 unsafe { _mm256_extract_epi32(self.lasts, 0) - 1 },
-                &self.metadata[0] );
+                &self.metadata[0],
+            );
         }
         if cmp & masks[1] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 1) + 1 },
                 unsafe { _mm256_extract_epi32(self.lasts, 1) - 1 },
-                &self.metadata[1] );
+                &self.metadata[1],
+            );
         }
         if cmp & masks[2] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 2) + 1 },
                 unsafe { _mm256_extract_epi32(self.lasts, 2) - 1 },
-                &self.metadata[2] );
+                &self.metadata[2],
+            );
         }
         if cmp & masks[3] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 3) + 1 },
                 unsafe { _mm256_extract_epi32(self.lasts, 3) - 1 },
-                &self.metadata[3] );
+                &self.metadata[3],
+            );
         }
         if cmp & masks[4] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 4) + 1 },
                 unsafe { _mm256_extract_epi32(self.lasts, 4) - 1 },
-                &self.metadata[4] );
+                &self.metadata[4],
+            );
         }
         if cmp & masks[5] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 5) + 1 },
                 unsafe { _mm256_extract_epi32(self.lasts, 5) - 1 },
-                &self.metadata[5] );
+                &self.metadata[5],
+            );
         }
         if cmp & masks[6] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 6) + 1 },
                 unsafe { _mm256_extract_epi32(self.lasts, 6) - 1 },
-                &self.metadata[6] );
+                &self.metadata[6],
+            );
         }
         if cmp & masks[7] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 7) + 1 },
                 unsafe { _mm256_extract_epi32(self.lasts, 7) - 1 },
-                &self.metadata[7] );
+                &self.metadata[7],
+            );
         }
     }
 
     fn query_chunk_metadata<'a, F>(&'a self, query_first: i32x8, query_last: i32x8, mut visit: F)
-            where F: FnMut(i32, i32, &'a T) {
-
+    where
+        F: FnMut(i32, i32, &'a T),
+    {
         let cmp: u32 = unsafe {
             let cmp1 = _mm256_cmpgt_epi32(query_last, self.firsts);
             let cmp2 = _mm256_cmpgt_epi32(self.lasts, query_first);
-            let cmp =_mm256_movemask_epi8(_mm256_and_si256(cmp1, cmp2));
+            let cmp = _mm256_movemask_epi8(_mm256_and_si256(cmp1, cmp2));
             transmute(cmp)
-         };
+        };
 
         // could be made nicer with a macro perhaps?
-        let masks = [0xf, 0xf0, 0xf00, 0xf000, 0xf0000, 0xf00000, 0xf000000, 0xf0000000];
+        let masks = [
+            0xf, 0xf0, 0xf00, 0xf000, 0xf0000, 0xf00000, 0xf000000, 0xf0000000,
+        ];
         if cmp & masks[0] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 0) + 1 },
                 unsafe { _mm256_extract_epi32(self.lasts, 0) - 1 },
-                &self.metadata[0] );
+                &self.metadata[0],
+            );
         }
         if cmp & masks[1] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 1) + 1 },
                 unsafe { _mm256_extract_epi32(self.lasts, 1) - 1 },
-                &self.metadata[1] );
+                &self.metadata[1],
+            );
         }
         if cmp & masks[2] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 2) + 1 },
                 unsafe { _mm256_extract_epi32(self.lasts, 2) - 1 },
-                &self.metadata[2] );
+                &self.metadata[2],
+            );
         }
         if cmp & masks[3] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 3) + 1 },
                 unsafe { _mm256_extract_epi32(self.lasts, 3) - 1 },
-                &self.metadata[3] );
+                &self.metadata[3],
+            );
         }
         if cmp & masks[4] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 4) + 1 },
                 unsafe { _mm256_extract_epi32(self.lasts, 4) - 1 },
-                &self.metadata[4] );
+                &self.metadata[4],
+            );
         }
         if cmp & masks[5] != 0 {
             visit(
-                unsafe { _mm256_extract_epi32(self.firsts, 5) + 1},
+                unsafe { _mm256_extract_epi32(self.firsts, 5) + 1 },
                 unsafe { _mm256_extract_epi32(self.lasts, 5) - 1 },
-                &self.metadata[5] );
+                &self.metadata[5],
+            );
         }
         if cmp & masks[6] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 6) + 1 },
                 unsafe { _mm256_extract_epi32(self.lasts, 6) - 1 },
-                &self.metadata[6] );
+                &self.metadata[6],
+            );
         }
         if cmp & masks[7] != 0 {
             visit(
-                unsafe { _mm256_extract_epi32(self.firsts, 7) + 1},
+                unsafe { _mm256_extract_epi32(self.firsts, 7) + 1 },
                 unsafe { _mm256_extract_epi32(self.lasts, 7) - 1 },
-                &self.metadata[7] );
+                &self.metadata[7],
+            );
         }
     }
 
     fn query_chunk<F>(&self, query_first: i32x8, query_last: i32x8, mut visit: F)
-            where F: FnMut(i32, i32) {
-
+    where
+        F: FnMut(i32, i32),
+    {
         let cmp: u32 = unsafe {
             let cmp1 = _mm256_cmpgt_epi32(query_last, self.firsts);
             let cmp2 = _mm256_cmpgt_epi32(self.lasts, query_first);
-            let cmp =_mm256_movemask_epi8(_mm256_and_si256(cmp1, cmp2));
+            let cmp = _mm256_movemask_epi8(_mm256_and_si256(cmp1, cmp2));
             transmute(cmp)
-         };
+        };
 
-        let masks = [0xf, 0xf0, 0xf00, 0xf000, 0xf0000, 0xf00000, 0xf000000, 0xf0000000];
+        let masks = [
+            0xf, 0xf0, 0xf00, 0xf000, 0xf0000, 0xf00000, 0xf000000, 0xf0000000,
+        ];
 
         // this is a bit slower
         // for (i, mask) in masks.iter().enumerate() {
@@ -403,46 +449,53 @@ impl<T, I> IntervalNode<T, I> where T: Clone, I: IntWithMax {
         if cmp & masks[0] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 0) + 1 },
-                unsafe { _mm256_extract_epi32(self.lasts, 0) - 1 } );
+                unsafe { _mm256_extract_epi32(self.lasts, 0) - 1 },
+            );
         }
         if cmp & masks[1] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 1) + 1 },
-                unsafe { _mm256_extract_epi32(self.lasts, 1) - 1 } );
+                unsafe { _mm256_extract_epi32(self.lasts, 1) - 1 },
+            );
         }
         if cmp & masks[2] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 2) + 1 },
-                unsafe { _mm256_extract_epi32(self.lasts, 2) - 1 } );
+                unsafe { _mm256_extract_epi32(self.lasts, 2) - 1 },
+            );
         }
         if cmp & masks[3] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 3) + 1 },
-                unsafe { _mm256_extract_epi32(self.lasts, 3) - 1 } );
+                unsafe { _mm256_extract_epi32(self.lasts, 3) - 1 },
+            );
         }
         if cmp & masks[4] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 4) + 1 },
-                unsafe { _mm256_extract_epi32(self.lasts, 4) - 1 } );
+                unsafe { _mm256_extract_epi32(self.lasts, 4) - 1 },
+            );
         }
         if cmp & masks[5] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 5) + 1 },
-                unsafe { _mm256_extract_epi32(self.lasts, 5) - 1 } );
+                unsafe { _mm256_extract_epi32(self.lasts, 5) - 1 },
+            );
         }
         if cmp & masks[6] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 6) + 1 },
-                unsafe { _mm256_extract_epi32(self.lasts, 6) - 1 } );
+                unsafe { _mm256_extract_epi32(self.lasts, 6) - 1 },
+            );
         }
         if cmp & masks[7] != 0 {
             visit(
                 unsafe { _mm256_extract_epi32(self.firsts, 7) + 1 },
-                unsafe { _mm256_extract_epi32(self.lasts, 7) - 1 } );
+                unsafe { _mm256_extract_epi32(self.lasts, 7) - 1 },
+            );
         }
     }
 }
-
 
 /// COITree data structure. A representation of a static set of intervals with
 /// associated metadata, enabling fast overlap and coverage queries.
@@ -450,46 +503,55 @@ impl<T, I> IntervalNode<T, I> where T: Clone, I: IntWithMax {
 /// The index type `I` is a typically `usize`, but can be `u32` or `u16`.
 /// It's slightly more efficient to use a smalled index type, assuming there are
 /// fewer than I::MAX-1 intervals to store.
-pub struct COITree<T, I>  where T: Clone, I: IntWithMax {
+pub struct COITree<T, I>
+where
+    T: Clone,
+    I: IntWithMax,
+{
     nodes: Vec<IntervalNode<T, I>>,
     len: usize,
     root_idx: usize,
-    height: usize
+    height: usize,
 }
 
-
-impl<T, I> COITree<T, I> where T: Default + Copy + Clone, I: IntWithMax {
-
+impl<T, I> COITree<T, I>
+where
+    T: Default + Copy + Clone,
+    I: IntWithMax,
+{
     fn chunk_intervals(intervals: Vec<Interval<T>>) -> Vec<IntervalNode<T, I>>
-            where T: Copy {
+    where
+        T: Copy,
+    {
         let n = intervals.len();
         let num_chunks = (n / 8) + (n % 8 != 0) as usize;
         let mut nodes: Vec<IntervalNode<T, I>> = Vec::with_capacity(num_chunks);
 
         // chunk initializer
-        let mut chunk_init: [Interval<T>; 8] =
-            [Interval{first: i32::MAX, last: i32::MIN, metadata: T::default()}; 8];
+        let mut chunk_init: [Interval<T>; 8] = [Interval {
+            first: i32::MAX,
+            last: i32::MIN,
+            metadata: T::default(),
+        }; 8];
 
         for chunk in intervals.chunks(8) {
             for (j, interval) in chunk.iter().enumerate() {
                 chunk_init[j] = *interval;
             }
 
-            // pad the end if needed
-            for j in chunk.len()..8 {
-                chunk_init[j] = Interval {
+            chunk_init.iter_mut().skip(chunk.len()).for_each(|item| {
+                *item = Interval {
                     first: i32::MAX,
                     last: i32::MIN,
-                    metadata: T::default()
+                    metadata: T::default(),
                 };
-            }
+            });
 
             nodes.push(IntervalNode::new(&chunk_init));
         }
 
-        return nodes;
+        nodes
     }
-
 
     pub fn new(mut intervals: Vec<Interval<T>>) -> COITree<T, I> {
         if intervals.len() >= (I::MAX).to_usize() {
@@ -500,41 +562,53 @@ impl<T, I> COITree<T, I> where T: Default + Copy + Clone, I: IntWithMax {
         intervals.sort_unstable_by_key(|interval| (interval.first, interval.last));
         let nodes = Self::chunk_intervals(intervals);
 
-
         let (nodes, root_idx, height) = veb_order(nodes);
-        return COITree { nodes: nodes, len: n, root_idx: root_idx, height: height };
+        COITree {
+            nodes,
+            len: n,
+            root_idx,
+            height,
+        }
     }
 
     /// Number of intervals in the set.
     pub fn len(&self) -> usize {
-        return self.len;
+        self.len
     }
 
     /// True iff the set is empty.
     pub fn is_empty(&self) -> bool {
-        return self.nodes.is_empty();
+        self.nodes.is_empty()
     }
 
     // /// Find intervals in the set overlaping the query `[first, last]` and call `visit` on every overlapping node
-    pub fn query<'a, F>(&'a self, first: i32, last: i32, mut visit: F) where F: FnMut(Interval<&'a T>) {
-        let (firstv, lastv) = unsafe {
-            (_mm256_set1_epi32(first), _mm256_set1_epi32(last)) };
+    pub fn query<'a, F>(&'a self, first: i32, last: i32, mut visit: F)
+    where
+        F: FnMut(Interval<&'a T>),
+    {
+        let (firstv, lastv) = unsafe { (_mm256_set1_epi32(first), _mm256_set1_epi32(last)) };
 
         if !self.is_empty() {
-            query_recursion(&self.nodes, self.root_idx, first, last, firstv, lastv, &mut visit);
+            query_recursion(
+                &self.nodes,
+                self.root_idx,
+                first,
+                last,
+                firstv,
+                lastv,
+                &mut visit,
+            );
         }
     }
 
     /// Count the number of intervals in the set overlapping the query `[first, last]`.
-    pub fn query_count(&self, first: i32, last: i32) -> usize  {
-
-        let (firstv, lastv) = unsafe {
-            (_mm256_set1_epi32(first), _mm256_set1_epi32(last)) };
+    pub fn query_count(&self, first: i32, last: i32) -> usize {
+        let (firstv, lastv) = unsafe { (_mm256_set1_epi32(first), _mm256_set1_epi32(last)) };
 
         if !self.is_empty() {
-            return query_recursion_count(&self.nodes, self.root_idx, first, last, firstv, lastv);
+            query_recursion_count(&self.nodes, self.root_idx, first, last, firstv, lastv)
         } else {
-            return 0;
+            0
         }
     }
 
@@ -548,11 +622,17 @@ impl<T, I> COITree<T, I> where T: Default + Copy + Clone, I: IntWithMax {
             return (0, 0);
         }
 
-        let (firstv, lastv) = unsafe {
-            (_mm256_set1_epi32(first), _mm256_set1_epi32(last)) };
+        let (firstv, lastv) = unsafe { (_mm256_set1_epi32(first), _mm256_set1_epi32(last)) };
 
         let (mut uncov_len, last_cov, count) = coverage_recursion(
-            &self.nodes, self.root_idx, first, last, firstv, lastv, first - 1);
+            &self.nodes,
+            self.root_idx,
+            first,
+            last,
+            firstv,
+            lastv,
+            first - 1,
+        );
 
         if last_cov < last {
             uncov_len += last - last_cov;
@@ -560,34 +640,37 @@ impl<T, I> COITree<T, I> where T: Default + Copy + Clone, I: IntWithMax {
 
         let cov = ((last - first + 1) as usize) - (uncov_len as usize);
 
-        return (count, cov);
+        (count, cov)
     }
 
     /// Iterate through the interval set in sorted order by interval start position.
     pub fn iter(&self) -> COITreeIterator<T, I> {
         let mut i = self.root_idx;
         let mut stack: Vec<usize> = Vec::with_capacity(self.height);
-        while i < self.nodes.len() &&
-                self.nodes[i].left != I::MAX &&
-                self.nodes[i].left != self.nodes[i].right {
+        while i < self.nodes.len()
+            && self.nodes[i].left != I::MAX
+            && self.nodes[i].left != self.nodes[i].right
+        {
             stack.push(i);
             i = self.nodes[i].left.to_usize();
         }
 
-        return COITreeIterator{
+        COITreeIterator {
             nodes: &self.nodes,
             len: self.len,
-            i: i,
+            i,
             j: 0,
             count: 0,
-            stack: stack,
-        };
+            stack,
+        }
     }
 }
 
-
 impl<'a, T, I> IntoIterator for &'a COITree<T, I>
-        where T: Default + Copy + Clone, I: IntWithMax {
+where
+    T: Default + Copy + Clone,
+    I: IntWithMax,
+{
     type Item = Interval<&'a T>;
     type IntoIter = COITreeIterator<'a, T, I>;
 
@@ -596,29 +679,35 @@ impl<'a, T, I> IntoIterator for &'a COITree<T, I>
     }
 }
 
-
 /// Iterate through nodes in a tree in sorted order by interval start position.
-pub struct COITreeIterator<'a, T, I> where T: Clone, I: IntWithMax {
+pub struct COITreeIterator<'a, T, I>
+where
+    T: Clone,
+    I: IntWithMax,
+{
     nodes: &'a Vec<IntervalNode<T, I>>,
-    len: usize, // total number of intervals
-    i: usize, // current node
-    j: usize, // offset into the current chunk
+    len: usize,   // total number of intervals
+    i: usize,     // current node
+    j: usize,     // offset into the current chunk
     count: usize, // number generated so far
     stack: Vec<usize>,
 }
 
-
-impl<'a, T, I> Iterator for COITreeIterator<'a, T, I> where T: Clone, I: IntWithMax {
+impl<'a, T, I> Iterator for COITreeIterator<'a, T, I>
+where
+    T: Clone,
+    I: IntWithMax,
+{
     type Item = Interval<&'a T>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.i*8 + self.j >= self.len {
+        if self.i * 8 + self.j >= self.len {
             return None;
         }
 
         let node = &self.nodes[self.i];
         if self.j < 8 {
-            let ret = Some(Interval{
+            let ret = Some(Interval {
                 first: node.first(self.j),
                 last: node.last(self.j),
                 metadata: &node.metadata[self.j],
@@ -630,81 +719,96 @@ impl<'a, T, I> Iterator for COITreeIterator<'a, T, I> where T: Clone, I: IntWith
 
         // find the next node
         self.j = 0;
-        if node.left == node.right { // simple node
+        if node.left == node.right {
+            // simple node
             if node.left.to_usize() > 1 {
                 self.i += 1;
+            } else if let Some(i) = self.stack.pop() {
+                self.i = i;
             } else {
-                if let Some(i) = self.stack.pop() {
-                    self.i = i;
-                } else {
-                    self.i = usize::MAX;
-                }
+                self.i = usize::MAX;
+            }
+        } else if node.right == I::MAX {
+            if let Some(i) = self.stack.pop() {
+                self.i = i;
+            } else {
+                self.i = usize::MAX;
             }
         } else {
-            if node.right == I::MAX {
-                if let Some(i) = self.stack.pop() {
-                    self.i = i;
-                } else {
-                    self.i = usize::MAX;
-                }
-            } else {
-                let mut i = node.right.to_usize();
+            let mut i = node.right.to_usize();
 
-                while self.nodes[i].left != I::MAX
-                        && self.nodes[i].left != self.nodes[i].right {
-                    self.stack.push(i);
-                    i = self.nodes[i].left.to_usize();
-                }
-
-                self.i = i;
+            while self.nodes[i].left != I::MAX && self.nodes[i].left != self.nodes[i].right {
+                self.stack.push(i);
+                i = self.nodes[i].left.to_usize();
             }
+
+            self.i = i;
         }
 
         let node = &self.nodes[self.i];
         self.count += 1;
-        return Some(Interval{
+        Some(Interval {
             first: node.first(self.j),
             last: node.last(self.j),
             metadata: &node.metadata[self.j],
-        });
+        })
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         let len_remaining = self.len - self.count;
-        return (len_remaining, Some(len_remaining));
+        (len_remaining, Some(len_remaining))
     }
 }
 
-
-impl<'a, T, I> ExactSizeIterator for COITreeIterator<'a, T, I> where T: Clone, I: IntWithMax {
+impl<'a, T, I> ExactSizeIterator for COITreeIterator<'a, T, I>
+where
+    T: Clone,
+    I: IntWithMax,
+{
     fn len(&self) -> usize {
-        return self.len - self.count;
+        self.len - self.count
     }
 }
-
 
 // // Recursively count overlaps between the tree specified by `nodes` and a
 // // query interval specified by `first`, `last`.
 fn query_recursion<'a, T, I, F>(
-        nodes: &'a [IntervalNode<T, I>], root_idx: usize, first: i32, last: i32,
-        firstv: i32x8, lastv: i32x8,
-        visit: &mut F) where T: Clone, I: IntWithMax, F: FnMut(Interval<&'a T>) {
-
+    nodes: &'a [IntervalNode<T, I>],
+    root_idx: usize,
+    first: i32,
+    last: i32,
+    firstv: i32x8,
+    lastv: i32x8,
+    visit: &mut F,
+) where
+    T: Clone,
+    I: IntWithMax,
+    F: FnMut(Interval<&'a T>),
+{
     let node = &nodes[root_idx];
 
-    if node.left == node.right { // simple subtree
+    if node.left == node.right {
+        // simple subtree
         for node in &nodes[root_idx..root_idx + node.right.to_usize()] {
             if last < node.min_first() {
                 break;
             }
 
             node.query_chunk_metadata(firstv, lastv, |first_hit, last_hit, metadata| {
-                visit(Interval{first: first_hit, last: last_hit, metadata: metadata});
+                visit(Interval {
+                    first: first_hit,
+                    last: last_hit,
+                    metadata,
+                });
             });
         }
     } else {
         node.query_chunk_metadata(firstv, lastv, |first_hit, last_hit, metadata| {
-            visit(Interval{first: first_hit, last: last_hit, metadata: metadata});
+            visit(Interval {
+                first: first_hit,
+                last: last_hit,
+                metadata,
+            });
         });
 
         if node.left < I::MAX {
@@ -723,16 +827,23 @@ fn query_recursion<'a, T, I, F>(
     }
 }
 
-
 // query_recursion but just count number of overlaps
 fn query_recursion_count<T, I>(
-        nodes: &[IntervalNode<T, I>], root_idx: usize,
-        first: i32, last: i32, firstv: i32x8, lastv: i32x8) -> usize
-            where T: Clone, I: IntWithMax {
-
+    nodes: &[IntervalNode<T, I>],
+    root_idx: usize,
+    first: i32,
+    last: i32,
+    firstv: i32x8,
+    lastv: i32x8,
+) -> usize
+where
+    T: Clone,
+    I: IntWithMax,
+{
     let node = &nodes[root_idx];
 
-    if node.left == node.right { // simple subtree
+    if node.left == node.right {
+        // simple subtree
         let mut count = 0;
         for node in &nodes[root_idx..root_idx + node.right.to_usize()] {
             if last < node.min_first() {
@@ -741,7 +852,7 @@ fn query_recursion_count<T, I>(
                 count += node.query_count_chunk(firstv, lastv);
             }
         }
-        return count;
+        count
     } else {
         let mut count = 0;
         count += node.query_count_chunk(firstv, lastv);
@@ -760,19 +871,27 @@ fn query_recursion_count<T, I>(
             }
         }
 
-        return count;
+        count
     }
 }
 
-
 fn coverage_recursion<T, I>(
-        nodes: &[IntervalNode<T, I>], root_idx: usize,
-        first: i32, last: i32, firstv: i32x8, lastv: i32x8, mut last_cov: i32) -> (i32, i32, usize)
-        where T: Clone, I: IntWithMax {
-
+    nodes: &[IntervalNode<T, I>],
+    root_idx: usize,
+    first: i32,
+    last: i32,
+    firstv: i32x8,
+    lastv: i32x8,
+    mut last_cov: i32,
+) -> (i32, i32, usize)
+where
+    T: Clone,
+    I: IntWithMax,
+{
     let node = &nodes[root_idx];
 
-    if node.left == node.right { // simple subtree
+    if node.left == node.right {
+        // simple subtree
         let mut count = 0;
         let mut uncov_len = 0;
         for node in &nodes[root_idx..root_idx + node.right.to_usize()] {
@@ -788,7 +907,7 @@ fn coverage_recursion<T, I>(
                 count += 1;
             });
         }
-        return (uncov_len, last_cov, count);
+        (uncov_len, last_cov, count)
     } else {
         let mut uncov_len = 0;
         let mut count = 0;
@@ -823,10 +942,9 @@ fn coverage_recursion<T, I>(
             }
         }
 
-        return (uncov_len, last_cov, count);
+        (uncov_len, last_cov, count)
     }
 }
-
 
 /// An alternative query strategy that can be much faster when queries are performed
 /// in sorted order and overlap.
@@ -835,24 +953,31 @@ fn coverage_recursion<T, I>(
 /// `SortedQuerent` tracks that state. If queries are not sorted or don't
 /// overlap, this strategy still works, but is slightly slower than
 /// `COITree::query`.
-pub struct SortedQuerent<'a, T, I> where T: Clone, I: IntWithMax {
+pub struct SortedQuerent<'a, T, I>
+where
+    T: Clone,
+    I: IntWithMax,
+{
     tree: &'a COITree<T, I>,
     prev_first: i32,
     prev_last: i32,
     overlapping_intervals: Vec<Interval<&'a T>>,
 }
 
-
-impl<'a, T, I> SortedQuerent<'a, T, I> where T: Default + Copy + Clone, I: IntWithMax {
+impl<'a, T, I> SortedQuerent<'a, T, I>
+where
+    T: Default + Copy + Clone,
+    I: IntWithMax,
+{
     /// Construct a new `SortedQuerent` to perform a sequence. queries.
     pub fn new(tree: &'a COITree<T, I>) -> SortedQuerent<'a, T, I> {
         let overlapping_intervals: Vec<Interval<&'a T>> = Vec::new();
-        return SortedQuerent {
-            tree: tree,
+        SortedQuerent {
+            tree,
             prev_first: -1,
             prev_last: -1,
-            overlapping_intervals: overlapping_intervals,
-        };
+            overlapping_intervals,
+        }
     }
 
     /// Find intervals in the underlying `COITree` that overlap the query
@@ -860,8 +985,9 @@ impl<'a, T, I> SortedQuerent<'a, T, I> where T: Default + Copy + Clone, I: IntWi
     /// `COITrees::query` but queries that overlap prior queries will potentially
     /// be faster.
     pub fn query<F>(&mut self, first: i32, last: i32, mut visit: F)
-            where F: FnMut(Interval<&'a T>) {
-
+    where
+        F: FnMut(Interval<&'a T>),
+    {
         if self.tree.is_empty() {
             return;
         }
@@ -870,7 +996,8 @@ impl<'a, T, I> SortedQuerent<'a, T, I> where T: Default + Copy + Clone, I: IntWi
         if first < self.prev_first || first > self.prev_last {
             // no overlap with previous query. have to resort to regular query strategy
             self.overlapping_intervals.clear();
-            self.tree.query(first, last, |node| self.overlapping_intervals.push(node));
+            self.tree
+                .query(first, last, |node| self.overlapping_intervals.push(node));
         } else {
             // successor query, exploit the overlap
 
@@ -900,15 +1027,20 @@ impl<'a, T, I> SortedQuerent<'a, T, I> where T: Default + Copy + Clone, I: IntWi
 
             // add any interval that start in [prev_last+1, last]
             if self.prev_last < last {
-                let qa = self.prev_last+1 - 2; // -2 accounts for the adjustment made in the chunk
+                let qa = self.prev_last + 1 - 2; // -2 accounts for the adjustment made in the chunk
                 let qb = last;
 
-                let (qav, qbv) = unsafe {
-                    (_mm256_set1_epi32(qa), _mm256_set1_epi32(qb)) };
+                let (qav, qbv) = unsafe { (_mm256_set1_epi32(qa), _mm256_set1_epi32(qb)) };
 
                 sorted_querent_query_firsts(
-                    &self.tree.nodes, self.tree.root_idx,
-                    qa, qb, qav, qbv, &mut self.overlapping_intervals);
+                    &self.tree.nodes,
+                    self.tree.root_idx,
+                    qa,
+                    qb,
+                    qav,
+                    qbv,
+                    &mut self.overlapping_intervals,
+                );
             }
         }
 
@@ -922,66 +1054,99 @@ impl<'a, T, I> SortedQuerent<'a, T, I> where T: Default + Copy + Clone, I: IntWi
     }
 }
 
-
 // find any intervals in the tree with their first value in [first, last]
 fn sorted_querent_query_firsts<'a, T, I>(
-        nodes: &'a [IntervalNode<T, I>], root_idx: usize, first: i32, last: i32,
-        firstv: i32x8, lastv: i32x8, overlapping_intervals: &mut Vec<Interval<&'a T>>)
-            where T: Clone, I: IntWithMax {
-
+    nodes: &'a [IntervalNode<T, I>],
+    root_idx: usize,
+    first: i32,
+    last: i32,
+    firstv: i32x8,
+    lastv: i32x8,
+    overlapping_intervals: &mut Vec<Interval<&'a T>>,
+) where
+    T: Clone,
+    I: IntWithMax,
+{
     let node = &nodes[root_idx];
 
-    if node.left == node.right { // simple subtree
+    if node.left == node.right {
+        // simple subtree
         for node in &nodes[root_idx..root_idx + node.right.to_usize()] {
             if last < node.min_first() {
                 break;
             }
 
             node.query_chunk_firsts(firstv, lastv, |first_hit, last_hit, metadata| {
-                overlapping_intervals.push(Interval{first: first_hit, last: last_hit, metadata});
+                overlapping_intervals.push(Interval {
+                    first: first_hit,
+                    last: last_hit,
+                    metadata,
+                });
             })
         }
-    }
-    else {
+    } else {
         node.query_chunk_firsts(firstv, lastv, |first_hit, last_hit, metadata| {
-            overlapping_intervals.push(Interval{first: first_hit, last: last_hit, metadata});
+            overlapping_intervals.push(Interval {
+                first: first_hit,
+                last: last_hit,
+                metadata,
+            });
         });
 
         if node.left < I::MAX && first <= node.min_first() {
             let left = node.left.to_usize();
-            sorted_querent_query_firsts(nodes, left, first, last, firstv, lastv, overlapping_intervals);
+            sorted_querent_query_firsts(
+                nodes,
+                left,
+                first,
+                last,
+                firstv,
+                lastv,
+                overlapping_intervals,
+            );
         }
 
         if node.right < I::MAX && last >= node.min_first() {
             let right = node.right.to_usize();
-            sorted_querent_query_firsts(nodes, right, first, last, firstv, lastv, overlapping_intervals);
+            sorted_querent_query_firsts(
+                nodes,
+                right,
+                first,
+                last,
+                firstv,
+                lastv,
+                overlapping_intervals,
+            );
         }
     }
 }
 
-
 // True iff the two intervals overlap.
 #[inline(always)]
 fn overlaps(first_a: i32, last_a: i32, first_b: i32, last_b: i32) -> bool {
-    return first_a <= last_b && last_a >= first_b;
+    first_a <= last_b && last_a >= first_b
 }
-
 
 // Used by `traverse` to keep record tree metadata.
 #[derive(Clone, Debug)]
-struct TraversalInfo<I> where I: IntWithMax {
+struct TraversalInfo<I>
+where
+    I: IntWithMax,
+{
     depth: u32,
-    inorder: I, // in-order visit number
+    inorder: I,  // in-order visit number
     preorder: I, // pre-order visit number
     subtree_size: I,
     parent: I,
     expected_hit_proportion: f32,
 }
 
-
-impl<I> Default for TraversalInfo<I> where I: IntWithMax {
+impl<I> Default for TraversalInfo<I>
+where
+    I: IntWithMax,
+{
     fn default() -> Self {
-        return TraversalInfo{
+        TraversalInfo {
             depth: 0,
             inorder: I::default(),
             preorder: I::default(),
@@ -992,33 +1157,46 @@ impl<I> Default for TraversalInfo<I> where I: IntWithMax {
     }
 }
 
-
 // dfs traversal of an implicit bst computing dfs number, node depth, subtree
 // size, and left and right pointers.
 fn traverse<T, I>(nodes: &mut [IntervalNode<T, I>]) -> Vec<TraversalInfo<I>>
-        where T: Clone, I: IntWithMax {
+where
+    T: Clone,
+    I: IntWithMax,
+{
     let n = nodes.len();
     let mut info = vec![TraversalInfo::default(); n];
     let mut inorder = 0;
     let mut preorder = 0;
-    traverse_recursion(nodes, &mut info, 0, n, 0, I::MAX, &mut inorder, &mut preorder);
+    traverse_recursion(
+        nodes,
+        &mut info,
+        0,
+        n,
+        0,
+        I::MAX,
+        &mut inorder,
+        &mut preorder,
+    );
 
-    return info;
+    info
 }
-
 
 // The recursive part of the `traverse` function.
 fn traverse_recursion<T, I>(
-        nodes: &mut [IntervalNode<T, I>],
-        info: &mut [TraversalInfo<I>],
-        start: usize,
-        end: usize,
-        depth: u32,
-        parent: I,
-        inorder: &mut usize,
-        preorder: &mut usize) -> (I, i32, f32)
-        where T: Clone, I: IntWithMax {
-
+    nodes: &mut [IntervalNode<T, I>],
+    info: &mut [TraversalInfo<I>],
+    start: usize,
+    end: usize,
+    depth: u32,
+    parent: I,
+    inorder: &mut usize,
+    preorder: &mut usize,
+) -> (I, i32, f32)
+where
+    T: Clone,
+    I: IntWithMax,
+{
     if start >= end {
         return (I::MAX, i32::MAX, f32::NAN);
     }
@@ -1038,8 +1216,15 @@ fn traverse_recursion<T, I>(
 
     if root_idx > start {
         let (left, left_subtree_first, left_expected_hits_) = traverse_recursion(
-            nodes, info, start, root_idx, depth+1,
-            I::from_usize(root_idx), inorder, preorder);
+            nodes,
+            info,
+            start,
+            root_idx,
+            depth + 1,
+            I::from_usize(root_idx),
+            inorder,
+            preorder,
+        );
 
         left_expected_hits = left_expected_hits_;
         left_subtree_span = nodes[left.to_usize()].subtree_last - left_subtree_first + 1;
@@ -1059,8 +1244,15 @@ fn traverse_recursion<T, I>(
 
     if root_idx + 1 < end {
         let (right, right_subtree_first, right_expected_hits_) = traverse_recursion(
-            nodes, info, root_idx+1, end, depth+1,
-            I::from_usize(root_idx), inorder, preorder);
+            nodes,
+            info,
+            root_idx + 1,
+            end,
+            depth + 1,
+            I::from_usize(root_idx),
+            inorder,
+            preorder,
+        );
 
         right_expected_hits = right_expected_hits_;
         right_subtree_span = nodes[right.to_usize()].subtree_last - right_subtree_first + 1;
@@ -1077,26 +1269,33 @@ fn traverse_recursion<T, I>(
     debug_assert!(left_subtree_span <= subtree_span);
     debug_assert!(right_subtree_span <= subtree_span);
 
-    let expected_hits =
-        ((nodes[root_idx].max_last() - nodes[root_idx].min_first() + 1) as f32 +
-        (left_subtree_span as f32) * left_expected_hits +
-        (right_subtree_span as f32) * right_expected_hits) / subtree_span as f32;
+    let expected_hits = ((nodes[root_idx].max_last() - nodes[root_idx].min_first() + 1) as f32
+        + (left_subtree_span as f32) * left_expected_hits
+        + (right_subtree_span as f32) * right_expected_hits)
+        / subtree_span as f32;
 
     info[root_idx].expected_hit_proportion = expected_hits / subtree_size as f32;
 
-    return (I::from_usize(root_idx), subtree_first, expected_hits);
+    (I::from_usize(root_idx), subtree_first, expected_hits)
 }
-
 
 // norder partition by depth on pivot into three parts, like so
 //      [ bottom left ][ top ][ bottom right ]
 // where bottom left and right are the bottom subtrees with positioned to
 // the left and right of the root node
 fn stable_ternary_tree_partition<I>(
-        input: &[I], output: &mut [I], partition: &mut [i8],
-        info: &[TraversalInfo<I>], pivot_depth: u32, pivot_dfs: I,
-        start: usize, end: usize) -> (usize, usize) where I: IntWithMax {
-
+    input: &[I],
+    output: &mut [I],
+    partition: &mut [i8],
+    info: &[TraversalInfo<I>],
+    pivot_depth: u32,
+    pivot_dfs: I,
+    start: usize,
+    end: usize,
+) -> (usize, usize)
+where
+    I: IntWithMax,
+{
     let n = end - start;
 
     // determine which partition each index goes in
@@ -1125,27 +1324,32 @@ fn stable_ternary_tree_partition<I>(
     let mut t = bl + bottom_left_size;
     let mut br = t + top_size;
     for (i, p) in input[start..end].iter().zip(&partition[start..end]) {
-        if *p < 0 {
-            output[bl] = *i;
-            bl += 1;
-        } else if *p == 0 {
-            output[t] = *i;
-            t += 1;
-        } else {
-            output[br] = *i;
-            br += 1;
+        match p.cmp(&0) {
+            Ordering::Less => {
+                output[bl] = *i;
+                bl += 1;
+            }
+            Ordering::Equal => {
+                output[t] = *i;
+                t += 1;
+            }
+            Ordering::Greater => {
+                output[br] = *i;
+                br += 1;
+            }
         }
     }
     debug_assert!(br == end);
 
-    return (bl, t);
+    (bl, t)
 }
-
 
 // put nodes in van Emde Boas order
 fn veb_order<T, I>(mut nodes: Vec<IntervalNode<T, I>>) -> (Vec<IntervalNode<T, I>>, usize, usize)
-        where T: Clone, I: IntWithMax {
-
+where
+    T: Clone,
+    I: IntWithMax,
+{
     // let now = Instant::now();
     let mut veb_nodes = nodes.clone();
     let n = veb_nodes.len();
@@ -1155,7 +1359,7 @@ fn veb_order<T, I>(mut nodes: Vec<IntervalNode<T, I>>) -> (Vec<IntervalNode<T, I
     }
 
     // let now = Instant::now();
-    let mut info = traverse(&mut nodes);
+    let info = traverse(&mut nodes);
     // eprintln!("traversing: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
     let mut max_depth = 0;
@@ -1166,9 +1370,8 @@ fn veb_order<T, I>(mut nodes: Vec<IntervalNode<T, I>>) -> (Vec<IntervalNode<T, I
     }
 
     let idxs: &mut [I] = &mut vec![I::default(); n];
-    for i in 0..n {
-        idxs[i] = I::from_usize(i);
-    }
+    (0..n).for_each(|i| idxs[i] = I::from_usize(i));
+
     let tmp: &mut [I] = &mut vec![I::default(); n];
 
     // put in dfs order
@@ -1182,7 +1385,8 @@ fn veb_order<T, I>(mut nodes: Vec<IntervalNode<T, I>>) -> (Vec<IntervalNode<T, I
 
     // let now = Instant::now();
     let root_idx = veb_order_recursion(
-        idxs, tmp, partition, &mut info, &mut nodes, 0, n, false, 0, max_depth);
+        idxs, tmp, partition, &info, &mut nodes, 0, n, false, 0, max_depth,
+    );
     // eprintln!("computing order: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
     // let now = Instant::now();
@@ -1212,14 +1416,15 @@ fn veb_order<T, I>(mut nodes: Vec<IntervalNode<T, I>>) -> (Vec<IntervalNode<T, I
     // eprintln!("ordering: {}s", now.elapsed().as_millis() as f64 / 1000.0);
     debug_assert!(compute_tree_size(&veb_nodes, root_idx) == n);
 
-    return (veb_nodes, root_idx, max_depth as usize);
+    (veb_nodes, root_idx, max_depth as usize)
 }
-
 
 // Traverse the tree and return the size, used as a basic sanity check.
 fn compute_tree_size<T, I>(nodes: &[IntervalNode<T, I>], root_idx: usize) -> usize
-        where T: Clone, I: IntWithMax {
-
+where
+    T: Clone,
+    I: IntWithMax,
+{
     let mut subtree_size = 1;
 
     let node = &nodes[root_idx];
@@ -1237,9 +1442,8 @@ fn compute_tree_size<T, I>(nodes: &[IntervalNode<T, I>], root_idx: usize) -> usi
         }
     }
 
-    return subtree_size;
+    subtree_size
 }
-
 
 // recursively reorder indexes to put it in vEB order. Called by `veb_order`
 //   idxs: current permutation
@@ -1252,12 +1456,21 @@ fn compute_tree_size<T, I>(nodes: &[IntervalNode<T, I>], root_idx: usize) -> usi
 //   min_depth, max_depth: depth extreme of the start..end slice
 //
 fn veb_order_recursion<T, I>(
-        idxs: &mut [I], tmp: &mut [I], partition: &mut [i8],
-        info: &[TraversalInfo<I>],
-        nodes: &mut [IntervalNode<T, I>],
-        start: usize, end: usize,
-        parity: bool,
-        min_depth: u32, max_depth: u32) -> I where T: Clone, I: IntWithMax {
+    idxs: &mut [I],
+    tmp: &mut [I],
+    partition: &mut [i8],
+    info: &[TraversalInfo<I>],
+    nodes: &mut [IntervalNode<T, I>],
+    start: usize,
+    end: usize,
+    parity: bool,
+    min_depth: u32,
+    max_depth: u32,
+) -> I
+where
+    T: Clone,
+    I: IntWithMax,
+{
     let n = (start..end).len();
 
     assert!(n > 0);
@@ -1267,9 +1480,11 @@ fn veb_order_recursion<T, I>(
     // small subtrees are put into sorted order and just searched through
     // linearly. There is a little trickiness to this because we have to
     // update the parent's child pointers and some other fields.
-    if childless &&
-            ((info[idxs[start].to_usize()].subtree_size.to_usize() <= SIMPLE_SUBTREE_CUTOFF) ||
-             (info[idxs[start].to_usize()].expected_hit_proportion >= SIMPLE_SUBTREE_DENSITY_CUTOFF)) {
+    if childless
+        && ((info[idxs[start].to_usize()].subtree_size.to_usize() <= SIMPLE_SUBTREE_CUTOFF)
+            || (info[idxs[start].to_usize()].expected_hit_proportion
+                >= SIMPLE_SUBTREE_DENSITY_CUTOFF))
+    {
         debug_assert!(n == info[idxs[start].to_usize()].subtree_size.to_usize());
 
         let old_root = idxs[start];
@@ -1314,17 +1529,33 @@ fn veb_order_recursion<T, I>(
     let pivot_depth = min_depth + (max_depth - min_depth) / 2;
     let pivot_dfs = info[idxs[start].to_usize()].inorder;
 
-    let (top_start, bottom_right_start) =
-        stable_ternary_tree_partition(
-            idxs, tmp, partition, info, pivot_depth, pivot_dfs, start, end);
+    let (top_start, bottom_right_start) = stable_ternary_tree_partition(
+        idxs,
+        tmp,
+        partition,
+        info,
+        pivot_depth,
+        pivot_dfs,
+        start,
+        end,
+    );
 
     // tmp is not partitioned, so swap pointers
     let (tmp, idxs) = (idxs, tmp);
 
     // recurse on top subtree
     let top_root_idx = veb_order_recursion(
-        idxs, tmp, partition, info, nodes, top_start, bottom_right_start,
-        !parity, min_depth, pivot_depth);
+        idxs,
+        tmp,
+        partition,
+        info,
+        nodes,
+        top_start,
+        bottom_right_start,
+        !parity,
+        min_depth,
+        pivot_depth,
+    );
 
     // find on recurse on subtrees in the bottom left partition and bottom right partition
     for (part_start, part_end) in &[(start, top_start), (bottom_right_start, end)] {
@@ -1335,7 +1566,7 @@ fn veb_order_recursion<T, I>(
 
             let mut subtree_max_depth = info[idxs[i].to_usize()].depth;
             let mut j = *part_end;
-            for (u, v) in (i+1..*part_end).zip(&idxs[i+1..*part_end]) {
+            for (u, v) in (i + 1..*part_end).zip(&idxs[i + 1..*part_end]) {
                 let depth = info[v.to_usize()].depth;
                 if depth == bottom_subtree_depth {
                     j = u;
@@ -1346,11 +1577,20 @@ fn veb_order_recursion<T, I>(
             }
 
             veb_order_recursion(
-                idxs, tmp, partition, info, nodes, i, j, !parity,
-                bottom_subtree_depth, subtree_max_depth);
+                idxs,
+                tmp,
+                partition,
+                info,
+                nodes,
+                i,
+                j,
+                !parity,
+                bottom_subtree_depth,
+                subtree_max_depth,
+            );
             i = j;
         }
     }
 
-    return top_root_idx;
+    top_root_idx
 }
