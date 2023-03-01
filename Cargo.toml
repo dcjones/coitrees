@@ -15,6 +15,12 @@ license-file = "LICENSE.md"
 lto = true
 #debug = true
 
+[features]
+
+default = []
+avx = []
+neon = []
+
 [dev-dependencies]
 rand = "0.8"
 fnv = "1.0.7"

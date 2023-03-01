@@ -1,4 +1,9 @@
+#[cfg(feature = "avx")]
 use coitrees::{COITree, Interval, SortedQuerent};
+
+#[cfg(feature = "default")]
+use coitrees::{COITree, IntervalNode, SortedQuerent};
+
 use std::error::Error;
 use std::ffi::CString;
 use std::fs::File;
@@ -60,9 +65,16 @@ fn parse_bed_line(line: &[u8]) -> (&str, i32, i32) {
     (seqname, first, last)
 }
 
+#[cfg(feature = "avx")]
+type IntervalHashMap = FnvHashMap<String, Vec<Interval<()>>>;
+
+#[cfg(feature = "default")]
+
+type IntervalHashMap = FnvHashMap<String, Vec<IntervalNode<(), u32>>>;
+
 // Read a bed file into a COITree
 fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<(), u32>>, GenericError> {
-    let mut nodes = FnvHashMap::<String, Vec<Interval<()>>>::default();
+    let mut nodes = IntervalHashMap::default();
 
     let now = Instant::now();
 
@@ -79,11 +91,15 @@ fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<(), u32>>, Gen
             nodes.entry(seqname.to_string()).or_insert(Vec::new())
         };
 
+        #[cfg(feature = "avx")]
         node_arr.push(Interval {
             first,
             last,
             metadata: (),
         });
+
+        #[cfg(feature = "default")]
+        node_arr.push(IntervalNode::new(first, last, ()));
 
         line_count += 1;
         line.clear();
@@ -109,7 +125,11 @@ fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<(), u32>>, Gen
 fn read_bed_file_numbered(
     path: &str,
 ) -> Result<FnvHashMap<String, COITree<usize, u32>>, GenericError> {
+    #[cfg(feature = "avx")]
     let mut nodes = FnvHashMap::<String, Vec<Interval<usize>>>::default();
+
+    #[cfg(feature = "default")]
+    let mut nodes = FnvHashMap::<String, Vec<IntervalNode<usize, u32>>>::default();
 
     let now = Instant::now();
 
@@ -126,11 +146,15 @@ fn read_bed_file_numbered(
             nodes.entry(seqname.to_string()).or_insert(Vec::new())
         };
 
+        #[cfg(feature = "avx")]
         node_arr.push(Interval {
             first,
             last,
             metadata: node_arr.len(),
         });
+
+        #[cfg(feature = "default")]
+        node_arr.push(IntervalNode::new(first, last, node_arr.len()));
 
         line_count += 1;
         line.clear();
