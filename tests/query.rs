@@ -335,7 +335,7 @@ mod tests {
     }
 }
 
-#[cfg(feature = "avx")]
+#[cfg(any(feature = "avx", feature = "neon"))]
 mod tests {
     use coitrees::{COITree, IntWithMax, Interval, SortedQuerent};
 

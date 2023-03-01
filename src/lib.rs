@@ -18,12 +18,12 @@ pub mod avx;
 #[cfg(feature = "avx")]
 pub use avx::*;
 
-#[cfg(feature = "default")]
-mod default;
-#[cfg(feature = "default")]
-pub use default::*;
+// #[cfg(feature = "default")]
+// mod default;
+// #[cfg(feature = "default")]
+// pub use default::*;
 
-#[cfg(feature = "neon")]
+// #[cfg(feature = "neon")]
 pub mod neon;
-#[cfg(feature = "neon")]
+// #[cfg(feature = "neon")]
 pub use neon::*;

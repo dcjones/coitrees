@@ -1,4 +1,4 @@
-#[cfg(feature = "avx")]
+#[cfg(any(feature = "avx" feature = "neon"))]
 use coitrees::{COITree, Interval, SortedQuerent};
 
 #[cfg(feature = "default")]
@@ -65,11 +65,10 @@ fn parse_bed_line(line: &[u8]) -> (&str, i32, i32) {
     (seqname, first, last)
 }
 
-#[cfg(feature = "avx")]
+#[cfg(any(feature = "avx" feature = "neon"))]
 type IntervalHashMap = FnvHashMap<String, Vec<Interval<()>>>;
 
 #[cfg(feature = "default")]
-
 type IntervalHashMap = FnvHashMap<String, Vec<IntervalNode<(), u32>>>;
 
 // Read a bed file into a COITree
@@ -91,7 +90,7 @@ fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<(), u32>>, Gen
             nodes.entry(seqname.to_string()).or_insert(Vec::new())
         };
 
-        #[cfg(feature = "avx")]
+        #[cfg(any(feature = "avx" feature = "neon"))]
         node_arr.push(Interval {
             first,
             last,
@@ -125,7 +124,7 @@ fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<(), u32>>, Gen
 fn read_bed_file_numbered(
     path: &str,
 ) -> Result<FnvHashMap<String, COITree<usize, u32>>, GenericError> {
-    #[cfg(feature = "avx")]
+    #[cfg(any(feature = "avx" feature = "neon"))]
     let mut nodes = FnvHashMap::<String, Vec<Interval<usize>>>::default();
 
     #[cfg(feature = "default")]
@@ -146,7 +145,7 @@ fn read_bed_file_numbered(
             nodes.entry(seqname.to_string()).or_insert(Vec::new())
         };
 
-        #[cfg(feature = "avx")]
+        #[cfg(any(feature = "avx" feature = "neon"))]
         node_arr.push(Interval {
             first,
             last,
