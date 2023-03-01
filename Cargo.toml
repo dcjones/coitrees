@@ -16,10 +16,10 @@ lto = true
 #debug = true
 
 [dev-dependencies]
-rand = "0.7"
-fnv = "1.0.3"
+rand = "0.8"
+fnv = "1.0.7"
 libc = "0.2"
-clap = "3.0.0-beta.1"
+clap = {version = "4.1.7", features = ["derive"]}
 
 [[example]]
 name = "bed-intersect"
