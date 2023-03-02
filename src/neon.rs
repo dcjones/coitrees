@@ -15,7 +15,6 @@ const LANE_SIZE: usize = 4;
 // Small subtrees at the bottom of the tree are stored in sorted order
 // This gives the upper bound on the size of such subtrees. Performance isn't
 // super sensitive, but is worse with a very small or very large number.
-// WARN: this may be 4 <03-01-23, Yangyang Li yangyang.li@northwestern.edu>
 const SIMPLE_SUBTREE_CUTOFF: usize = 8;
 
 // Very dense subtrees in which we probably intersect most of the intervals
