@@ -13,17 +13,18 @@
 //! through the intermediary `SortedQuerenty` which keeps track of some state
 //! to accelerate overlaping queries.
 
-#[cfg(feature = "avx")]
-pub mod avx;
-#[cfg(feature = "avx")]
+#[cfg(all(target_feature = "avx2", feature = "default"))]
+mod avx;
+
+#[cfg(all(target_feature = "avx2", feature = "default"))]
 pub use avx::*;
 
-#[cfg(feature = "default")]
+#[cfg(all(feature = "no-simd", not(feature = "default")))]
 mod default;
-#[cfg(feature = "default")]
+#[cfg(all(feature = "no-simd", not(feature = "default")))]
 pub use default::*;
 
-#[cfg(feature = "neon")]
-pub mod neon;
-#[cfg(feature = "neon")]
+#[cfg(all(target_feature = "neon", feature = "default"))]
+mod neon;
+#[cfg(all(target_feature = "neon", feature = "default"))]
 pub use neon::*;

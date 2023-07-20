@@ -1,7 +1,7 @@
-#[cfg(any(feature = "avx", feature = "neon"))]
+#[cfg(feature = "default")]
 use coitrees::{COITree, Interval, SortedQuerent};
 
-#[cfg(feature = "default")]
+#[cfg(all(feature = "no-simd", not(feature = "default")))]
 use coitrees::{COITree, IntervalNode, SortedQuerent};
 
 use std::error::Error;
@@ -65,10 +65,10 @@ fn parse_bed_line(line: &[u8]) -> (&str, i32, i32) {
     (seqname, first, last)
 }
 
-#[cfg(any(feature = "avx", feature = "neon"))]
+#[cfg(feature = "default")]
 type IntervalHashMap = FnvHashMap<String, Vec<Interval<()>>>;
 
-#[cfg(feature = "default")]
+#[cfg(all(feature = "no-simd", not(feature = "default")))]
 type IntervalHashMap = FnvHashMap<String, Vec<IntervalNode<(), u32>>>;
 
 // Read a bed file into a COITree
@@ -81,6 +81,7 @@ fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<(), u32>>, Gen
     let mut rdr = BufReader::new(file);
     let mut line_count = 0;
     let mut line = Vec::new();
+
     while rdr.read_until(b'\n', &mut line).unwrap() > 0 {
         let (seqname, first, last) = parse_bed_line(&line);
 
@@ -90,14 +91,14 @@ fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<(), u32>>, Gen
             nodes.entry(seqname.to_string()).or_insert(Vec::new())
         };
 
-        #[cfg(any(feature = "avx", feature = "neon"))]
+        #[cfg(feature = "default")]
         node_arr.push(Interval {
             first,
             last,
             metadata: (),
         });
 
-        #[cfg(feature = "default")]
+        #[cfg(all(feature = "no-simd", not(feature = "default")))]
         node_arr.push(IntervalNode::new(first, last, ()));
 
         line_count += 1;
@@ -124,10 +125,10 @@ fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<(), u32>>, Gen
 fn read_bed_file_numbered(
     path: &str,
 ) -> Result<FnvHashMap<String, COITree<usize, u32>>, GenericError> {
-    #[cfg(any(feature = "avx", feature = "neon"))]
+    #[cfg(feature = "default")]
     let mut nodes = FnvHashMap::<String, Vec<Interval<usize>>>::default();
 
-    #[cfg(feature = "default")]
+    #[cfg(all(feature = "no-simd", not(feature = "default")))]
     let mut nodes = FnvHashMap::<String, Vec<IntervalNode<usize, u32>>>::default();
 
     let now = Instant::now();
@@ -145,14 +146,14 @@ fn read_bed_file_numbered(
             nodes.entry(seqname.to_string()).or_insert(Vec::new())
         };
 
-        #[cfg(any(feature = "avx", feature = "neon"))]
+        #[cfg(feature = "default")]
         node_arr.push(Interval {
             first,
             last,
             metadata: node_arr.len(),
         });
 
-        #[cfg(feature = "default")]
+        #[cfg(all(feature = "no-simd", not(feature = "default")))]
         node_arr.push(IntervalNode::new(first, last, node_arr.len()));
 
         line_count += 1;

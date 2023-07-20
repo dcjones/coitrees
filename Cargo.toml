@@ -12,20 +12,35 @@ license-file = "LICENSE.md"
 
 
 [profile.release]
+debug = 0
+strip = "symbols"
 lto = true
-#debug = true
+opt-level = 3
+codegen-units = 1
+
 
 [features]
-
 default = []
-avx = []
-neon = []
+no-simd = []
+
+
+[profile.dev.package."*"]
+opt-level = 3 # Compile dependencies with optimizations on even in debug mode.
+
+[profile.no-opt]
+inherits = "dev"
+opt-level = 0
+
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false
 
 [dev-dependencies]
 rand = "0.8"
 fnv = "1.0.7"
 libc = "0.2"
-clap = {version = "4.1.7", features = ["derive"]}
+clap = { version = "4.3.7", features = ["derive"] }
 
 [[example]]
 name = "bed-intersect"

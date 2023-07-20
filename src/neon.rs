@@ -101,6 +101,14 @@ impl<T> Interval<T>
 where
     T: Clone,
 {
+    pub fn new(first: i32, last: i32, metadata: T) -> Interval<T> {
+        Self {
+            first,
+            last,
+            metadata,
+        }
+    }
+
     pub fn len(&self) -> i32 {
         max(0, self.last - self.first + 1)
     }
@@ -1478,4 +1486,22 @@ where
     }
 
     top_root_idx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_metadata() {
+        let intervals = (0..10)
+            .map(|i| Interval::new(i, i + 1, i as usize))
+            .collect::<Vec<Interval<usize>>>();
+
+        let tree = COITree::<usize, u32>::new(intervals);
+        let mut metadata = Vec::new();
+        tree.query(0, 3, |node| metadata.push(node));
+
+        println!("{:?}", metadata);
+    }
 }

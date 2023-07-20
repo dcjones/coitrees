@@ -102,6 +102,14 @@ impl<T> Interval<T>
 where
     T: Clone,
 {
+    pub fn new(first: i32, last: i32, metadata: T) -> Interval<T> {
+        Self {
+            first,
+            last,
+            metadata,
+        }
+    }
+
     pub fn len(&self) -> i32 {
         max(0, self.last - self.first + 1)
     }
