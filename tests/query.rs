@@ -1,4 +1,5 @@
 #[cfg(feature = "default")]
+
 mod tests {
     use coitrees::{COITree, IntWithMax, Interval, SortedQuerent};
 

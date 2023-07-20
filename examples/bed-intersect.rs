@@ -1,7 +1,7 @@
 #[cfg(feature = "default")]
 use coitrees::{COITree, Interval, SortedQuerent};
 
-#[cfg(all(feature = "no-simd", not(feature = "default")))]
+#[cfg(all(feature = "nosimd", not(feature = "default")))]
 use coitrees::{COITree, IntervalNode, SortedQuerent};
 
 use std::error::Error;
@@ -68,7 +68,7 @@ fn parse_bed_line(line: &[u8]) -> (&str, i32, i32) {
 #[cfg(feature = "default")]
 type IntervalHashMap = FnvHashMap<String, Vec<Interval<()>>>;
 
-#[cfg(all(feature = "no-simd", not(feature = "default")))]
+#[cfg(all(feature = "nosimd", not(feature = "default")))]
 type IntervalHashMap = FnvHashMap<String, Vec<IntervalNode<(), u32>>>;
 
 // Read a bed file into a COITree
@@ -98,7 +98,7 @@ fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<(), u32>>, Gen
             metadata: (),
         });
 
-        #[cfg(all(feature = "no-simd", not(feature = "default")))]
+        #[cfg(all(feature = "nosimd", not(feature = "default")))]
         node_arr.push(IntervalNode::new(first, last, ()));
 
         line_count += 1;
@@ -128,7 +128,7 @@ fn read_bed_file_numbered(
     #[cfg(feature = "default")]
     let mut nodes = FnvHashMap::<String, Vec<Interval<usize>>>::default();
 
-    #[cfg(all(feature = "no-simd", not(feature = "default")))]
+    #[cfg(all(feature = "nosimd", not(feature = "default")))]
     let mut nodes = FnvHashMap::<String, Vec<IntervalNode<usize, u32>>>::default();
 
     let now = Instant::now();
@@ -153,7 +153,7 @@ fn read_bed_file_numbered(
             metadata: node_arr.len(),
         });
 
-        #[cfg(all(feature = "no-simd", not(feature = "default")))]
+        #[cfg(all(feature = "nosimd", not(feature = "default")))]
         node_arr.push(IntervalNode::new(first, last, node_arr.len()));
 
         line_count += 1;

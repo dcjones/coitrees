@@ -19,10 +19,10 @@ mod avx;
 #[cfg(all(target_feature = "avx2", feature = "default"))]
 pub use avx::*;
 
-#[cfg(all(feature = "no-simd", not(feature = "default")))]
-mod default;
-#[cfg(all(feature = "no-simd", not(feature = "default")))]
-pub use default::*;
+#[cfg(all(feature = "nosimd", not(feature = "default")))]
+mod nosimd;
+#[cfg(all(feature = "nosimd", not(feature = "default")))]
+pub use nosimd::*;
 
 #[cfg(all(target_feature = "neon", feature = "default"))]
 mod neon;

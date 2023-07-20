@@ -21,7 +21,7 @@ codegen-units = 1
 
 [features]
 default = []
-no-simd = []
+nosimd = []
 
 
 [profile.dev.package."*"]
