@@ -13,18 +13,17 @@
 //! through the intermediary `SortedQuerenty` which keeps track of some state
 //! to accelerate overlaping queries.
 
-#[cfg(all(target_feature = "avx2", feature = "default"))]
+#[cfg(all(target_feature = "avx2", not(feature = "nosimd")))]
 mod avx;
-
-#[cfg(all(target_feature = "avx2", feature = "default"))]
+#[cfg(all(target_feature = "avx2", not(feature = "nosimd")))]
 pub use avx::*;
 
-#[cfg(all(feature = "nosimd", not(feature = "default")))]
-mod nosimd;
-#[cfg(all(feature = "nosimd", not(feature = "default")))]
-pub use nosimd::*;
-
-#[cfg(all(target_feature = "neon", feature = "default"))]
+#[cfg(all(target_feature = "neon", not(feature = "nosimd")))]
 mod neon;
-#[cfg(all(target_feature = "neon", feature = "default"))]
+#[cfg(all(target_feature = "neon", not(feature = "nosimd")))]
 pub use neon::*;
+
+#[cfg(all(not(feature = "nosimd"), not(target_feature = "avx2"), not(target_feature = "neon")))]
+mod nosimd;
+#[cfg(all(not(feature = "nosimd"), not(target_feature = "avx2"), not(target_feature = "neon")))]
+pub use nosimd::*;
