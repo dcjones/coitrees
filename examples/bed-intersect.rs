@@ -365,23 +365,23 @@ fn query_bed_files_with_sorted_querent(
 #[command(about = " Find overlaps between two groups of intervals ")]
 struct Args {
     /// intervals to index
-    #[arg(long, value_name = "intervals.bed")]
+    #[arg(value_name = "intervals.bed")]
     input1: String,
 
     /// query intervals
-    #[arg(long, value_name = "queries.bed")]
+    #[arg(value_name = "queries.bed")]
     input2: String,
 
     /// use alternative search strategy that's faster if queries are sorted and tend to overlap
-    #[arg(short = 's', long = "--sorted")]
+    #[arg(short = 's', long = "sorted")]
     use_sorted_querent: bool,
 
     /// load both interval sets into memory instead of streaming queries
-    #[arg(short = 't', long = "--tree-vs-tree")]
+    #[arg(short = 't')]
     tree_vs_tree: bool,
 
     /// compute proportion of queries covered
-    #[arg(short = 'c', long = "--coverage")]
+    #[arg(short = 'c')]
     coverage: bool,
 }
 
