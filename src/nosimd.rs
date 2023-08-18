@@ -16,7 +16,7 @@
 use std::cmp::Ordering;
 use std::fmt::Debug;
 use std::iter::IntoIterator;
-use super::interval::{AnnotatedInterval, Interval, IntervalTree, IntWithMax, SortedQuerent};
+use super::interval::{GenericInterval, Interval, IntervalTree, IntWithMax, SortedQuerent};
 
 // Small subtrees at the bottom of the tree are stored in sorted order
 // This gives the upper bound on the size of such subtrees. Performance isn't
@@ -68,7 +68,7 @@ where
     }
 
     fn from_interval<V>(interval: &V) -> IntervalNode<T, I>
-    where V: AnnotatedInterval<T>
+    where V: GenericInterval<T>
      {
         return IntervalNode::new(interval.first(), interval.last(), interval.metadata().clone());
     }
@@ -81,7 +81,7 @@ where
 }
 
 // IntervalNodes are themselves a type of annotated interval
-impl<T, I> AnnotatedInterval<T> for IntervalNode<T, I>
+impl<T, I> GenericInterval<T> for IntervalNode<T, I>
 where
     T: Clone,
     I: IntWithMax,
@@ -159,7 +159,7 @@ where
     fn new<'c, U, V>(intervals: U) -> BasicCOITree<T, I>
     where
         U: IntoIterator<Item = &'c V>,
-        V: AnnotatedInterval<T> + 'c,
+        V: GenericInterval<T> + 'c,
     {
         let nodes: Vec<IntervalNode<T,I>> = intervals.into_iter().map(|node| IntervalNode::from_interval(node)).collect();
         if nodes.len() >= (I::MAX).to_usize() {

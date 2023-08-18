@@ -2,7 +2,7 @@
 use std::ops::{AddAssign, SubAssign};
 use std::iter::IntoIterator;
 
-pub trait AnnotatedInterval<T>
+pub trait GenericInterval<T>
 where
     T: Clone,
 {
@@ -70,7 +70,7 @@ where
     }
 }
 
-impl<T> AnnotatedInterval<T> for Interval<T>
+impl<T> GenericInterval<T> for Interval<T>
 where
     T: Clone
 {
@@ -88,7 +88,7 @@ where
 }
 
 
-impl<'a, T> AnnotatedInterval<T> for Interval<&'a T>
+impl<'a, T> GenericInterval<T> for Interval<&'a T>
 where
     T: Clone
 {
@@ -170,13 +170,13 @@ pub trait IntervalTree<'a>
 {
     type Metadata: Clone + 'a;
     type Index: IntWithMax;
-    type Item: AnnotatedInterval<Self::Metadata> + 'a;
+    type Item: GenericInterval<Self::Metadata> + 'a;
     type Iter: Iterator<Item = Interval<&'a Self::Metadata>>;
 
     fn new<'b, U, V>(intervals: U) -> Self
     where
         U: IntoIterator<Item = &'b V>,
-        V: AnnotatedInterval<Self::Metadata> + 'b;
+        V: GenericInterval<Self::Metadata> + 'b;
 
     fn len(&self) -> usize;
 
@@ -196,7 +196,7 @@ pub trait IntervalTree<'a>
 pub trait SortedQuerent<'a> {
     type Metadata: Clone + 'a;
     type Index: IntWithMax;
-    type Item: AnnotatedInterval<Self::Metadata> + 'a;
+    type Item: GenericInterval<Self::Metadata> + 'a;
     type Iter: Iterator<Item = Interval<&'a Self::Metadata>>;
     type Tree: IntervalTree<'a, Metadata = Self::Metadata, Index = Self::Index, Item = Self::Item, Iter = Self::Iter> + 'a;
 

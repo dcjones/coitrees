@@ -7,7 +7,7 @@ use std::cmp::{max, Ordering};
 use std::fmt::Debug;
 use std::marker::Copy;
 use std::mem::transmute;
-use super::interval::{AnnotatedInterval, Interval, IntervalTree, IntWithMax, SortedQuerent};
+use super::interval::{GenericInterval, Interval, IntervalTree, IntWithMax, SortedQuerent};
 
 #[allow(non_camel_case_types)]
 type i32x8 = __m256i;
@@ -444,10 +444,10 @@ where
     type Item = Interval<&'a T>;
     type Iter = AVXCOITreeIterator<'a, T, I>;
 
-    fn new<b, U, V>(intervals: U) -> AVXCOITree<T, I>
+    fn new<'b, U, V>(intervals: U) -> AVXCOITree<T, I>
     where
         U: IntoIterator<Item = &'b V>,
-        V: AnnotatedInterval<T> + 'b
+        V: GenericInterval<T> + 'b
     {
         let mut intervals: Vec<_> = intervals.into_iter().map(
             |interval| Interval::new(interval.first(), interval.last(), interval.metadata().clone())).collect();
