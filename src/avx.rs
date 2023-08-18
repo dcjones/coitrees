@@ -4,11 +4,10 @@ use std::arch::x86_64::{
 };
 
 use std::cmp::{max, Ordering};
-use std::convert::{TryFrom, TryInto};
 use std::fmt::Debug;
 use std::marker::Copy;
 use std::mem::transmute;
-use std::ops::{AddAssign, SubAssign};
+use super::interval::{AnnotatedInterval, Interval, IntervalTree, IntWithMax, SortedQuerent};
 
 #[allow(non_camel_case_types)]
 type i32x8 = __m256i;
@@ -23,117 +22,6 @@ const SIMPLE_SUBTREE_CUTOFF: usize = 8;
 // is a above this number it becomes a simple subtree.
 const SIMPLE_SUBTREE_DENSITY_CUTOFF: f32 = 0.2;
 
-/// A trait facilitating COITree index types.
-pub trait IntWithMax:
-    TryInto<usize> + TryFrom<usize> + Copy + Default + PartialEq + Ord + AddAssign + SubAssign
-{
-    const MAX: Self;
-
-    // typically the branch here should be optimized out, because we are
-    // converting, e.g. a u32 to a usize on 64-bit system.
-    #[inline(always)]
-    fn to_usize(self) -> usize {
-        match self.try_into() {
-            Ok(x) => x,
-            Err(_) => panic!("index conversion to usize failed"),
-        }
-    }
-
-    #[inline(always)]
-    fn from_usize(x: usize) -> Self {
-        match x.try_into() {
-            Ok(y) => y,
-            Err(_) => panic!("index conversion from usize failed"),
-        }
-    }
-
-    fn one() -> Self {
-        Self::from_usize(1)
-    }
-}
-
-impl IntWithMax for usize {
-    const MAX: usize = usize::MAX;
-}
-
-impl IntWithMax for u32 {
-    const MAX: u32 = u32::MAX;
-}
-
-impl IntWithMax for u16 {
-    const MAX: u16 = u16::MAX;
-}
-
-/// An interval with associated metadata.
-///
-/// Intervals in `COITree` are treated as end-inclusive.
-///
-/// Metadata can be an arbitrary type `T`, but because nodes are stored in contiguous
-/// memory, it may be better to store large metadata outside the node and
-/// use a pointer or reference for the metadata.
-///
-/// # Examples
-/// ```
-/// use coitrees::Interval;
-///
-/// #[derive(Clone)]
-/// struct MyMetadata {
-///     chrom: String,
-///     posstrand: bool
-/// }
-///
-/// let some_interval = Interval{
-///     first: 10, last: 24000,
-///     metadata: MyMetadata{chrom: String::from("chr1"), posstrand: false}};
-///
-/// assert_eq!(some_interval.len(), 23991);
-/// ```
-#[derive(Clone, Copy, Debug)]
-pub struct Interval<T>
-where
-    T: Clone,
-{
-    pub first: i32,
-    pub last: i32,
-    pub metadata: T,
-}
-
-impl<T> Interval<T>
-where
-    T: Clone,
-{
-    pub fn new(first: i32, last: i32, metadata: T) -> Interval<T> {
-        Self {
-            first,
-            last,
-            metadata,
-        }
-    }
-
-    pub fn len(&self) -> i32 {
-        max(0, self.last - self.first + 1)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-}
-
-#[test]
-fn test_interval_len() {
-    fn make_interval(first: i32, last: i32) -> Interval<()> {
-        Interval {
-            first,
-            last,
-            metadata: (),
-        }
-    }
-
-    assert_eq!(make_interval(1, -1).len(), 0);
-    assert_eq!(make_interval(1, 0).len(), 0);
-    assert_eq!(make_interval(1, 1).len(), 1);
-    assert_eq!(make_interval(1, 2).len(), 2);
-}
 
 /// Node in the interval tree. Each node holds a chunk of 8 intervals.
 #[derive(Clone)]
@@ -496,7 +384,7 @@ where
 /// The index type `I` is a typically `usize`, but can be `u32` or `u16`.
 /// It's slightly more efficient to use a smalled index type, assuming there are
 /// fewer than I::MAX-1 intervals to store.
-pub struct COITree<T, I>
+pub struct AVXCOITree<T, I>
 where
     T: Clone,
     I: IntWithMax,
@@ -507,14 +395,13 @@ where
     height: usize,
 }
 
-impl<T, I> COITree<T, I>
+
+impl<T, I> AVXCOITree<T, I>
 where
     T: Default + Copy + Clone,
     I: IntWithMax,
 {
     fn chunk_intervals(intervals: Vec<Interval<T>>) -> Vec<IntervalNode<T, I>>
-    where
-        T: Copy,
     {
         let n = intervals.len();
         let num_chunks = (n / 8) + (n % 8 != 0) as usize;
@@ -545,8 +432,26 @@ where
 
         nodes
     }
+}
 
-    pub fn new(mut intervals: Vec<Interval<T>>) -> COITree<T, I> {
+impl<'a, T, I> IntervalTree<'a> for AVXCOITree<T, I>
+where
+    T: Default + Copy + Clone + 'a,
+    I: IntWithMax + 'a,
+{
+    type Metadata = T;
+    type Index = I;
+    type Item = Interval<&'a T>;
+    type Iter = AVXCOITreeIterator<'a, T, I>;
+
+    fn new<b, U, V>(intervals: U) -> AVXCOITree<T, I>
+    where
+        U: IntoIterator<Item = &'b V>,
+        V: AnnotatedInterval<T> + 'b
+    {
+        let mut intervals: Vec<_> = intervals.into_iter().map(
+            |interval| Interval::new(interval.first(), interval.last(), interval.metadata().clone())).collect();
+
         if intervals.len() >= (I::MAX).to_usize() {
             panic!("COITree construction failed: more intervals than index type can enumerate")
         }
@@ -556,7 +461,7 @@ where
         let nodes = Self::chunk_intervals(intervals);
 
         let (nodes, root_idx, height) = veb_order(nodes);
-        COITree {
+        AVXCOITree {
             nodes,
             len: n,
             root_idx,
@@ -565,19 +470,19 @@ where
     }
 
     /// Number of intervals in the set.
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.len
     }
 
     /// True iff the set is empty.
-    pub fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
 
     // /// Find intervals in the set overlaping the query `[first, last]` and call `visit` on every overlapping node
-    pub fn query<'a, F>(&'a self, first: i32, last: i32, mut visit: F)
+    fn query<F>(&'a self, first: i32, last: i32, mut visit: F)
     where
-        F: FnMut(Interval<&'a T>),
+        F: FnMut(&Interval<&'a T>),
     {
         let (firstv, lastv) = unsafe { (_mm256_set1_epi32(first), _mm256_set1_epi32(last)) };
 
@@ -595,7 +500,7 @@ where
     }
 
     /// Count the number of intervals in the set overlapping the query `[first, last]`.
-    pub fn query_count(&self, first: i32, last: i32) -> usize {
+    fn query_count(&self, first: i32, last: i32) -> usize {
         let (firstv, lastv) = unsafe { (_mm256_set1_epi32(first), _mm256_set1_epi32(last)) };
 
         if !self.is_empty() {
@@ -608,7 +513,7 @@ where
     /// Return a pair `(count, cov)`, where `count` gives the number of intervals
     /// in the set overlapping the query, and `cov` the number of positions in the query
     /// interval covered by at least one interval in the set.
-    pub fn coverage(&self, first: i32, last: i32) -> (usize, usize) {
+    fn coverage(&self, first: i32, last: i32) -> (usize, usize) {
         assert!(last >= first);
 
         if self.is_empty() {
@@ -637,7 +542,7 @@ where
     }
 
     /// Iterate through the interval set in sorted order by interval start position.
-    pub fn iter(&self) -> COITreeIterator<T, I> {
+    fn iter(&self) -> AVXCOITreeIterator<T, I> {
         let mut i = self.root_idx;
         let mut stack: Vec<usize> = Vec::with_capacity(self.height);
         while i < self.nodes.len()
@@ -648,7 +553,7 @@ where
             i = self.nodes[i].left.to_usize();
         }
 
-        COITreeIterator {
+        AVXCOITreeIterator {
             nodes: &self.nodes,
             len: self.len,
             i,
@@ -659,21 +564,21 @@ where
     }
 }
 
-impl<'a, T, I> IntoIterator for &'a COITree<T, I>
+impl<'a, T, I> IntoIterator for &'a AVXCOITree<T, I>
 where
     T: Default + Copy + Clone,
     I: IntWithMax,
 {
     type Item = Interval<&'a T>;
-    type IntoIter = COITreeIterator<'a, T, I>;
+    type IntoIter = AVXCOITreeIterator<'a, T, I>;
 
-    fn into_iter(self) -> COITreeIterator<'a, T, I> {
+    fn into_iter(self) -> AVXCOITreeIterator<'a, T, I> {
         return self.iter();
     }
 }
 
 /// Iterate through nodes in a tree in sorted order by interval start position.
-pub struct COITreeIterator<'a, T, I>
+pub struct AVXCOITreeIterator<'a, T, I>
 where
     T: Clone,
     I: IntWithMax,
@@ -686,7 +591,7 @@ where
     stack: Vec<usize>,
 }
 
-impl<'a, T, I> Iterator for COITreeIterator<'a, T, I>
+impl<'a, T, I> Iterator for AVXCOITreeIterator<'a, T, I>
 where
     T: Clone,
     I: IntWithMax,
@@ -753,7 +658,7 @@ where
     }
 }
 
-impl<'a, T, I> ExactSizeIterator for COITreeIterator<'a, T, I>
+impl<'a, T, I> ExactSizeIterator for AVXCOITreeIterator<'a, T, I>
 where
     T: Clone,
     I: IntWithMax,
@@ -776,7 +681,7 @@ fn query_recursion<'a, T, I, F>(
 ) where
     T: Clone,
     I: IntWithMax,
-    F: FnMut(Interval<&'a T>),
+    F: FnMut(&Interval<&'a T>),
 {
     let node = &nodes[root_idx];
 
@@ -788,7 +693,7 @@ fn query_recursion<'a, T, I, F>(
             }
 
             node.query_chunk_metadata(firstv, lastv, |first_hit, last_hit, metadata| {
-                visit(Interval {
+                visit(&Interval {
                     first: first_hit,
                     last: last_hit,
                     metadata,
@@ -797,7 +702,7 @@ fn query_recursion<'a, T, I, F>(
         }
     } else {
         node.query_chunk_metadata(firstv, lastv, |first_hit, last_hit, metadata| {
-            visit(Interval {
+            visit(&Interval {
                 first: first_hit,
                 last: last_hit,
                 metadata,
@@ -946,26 +851,32 @@ where
 /// `SortedQuerent` tracks that state. If queries are not sorted or don't
 /// overlap, this strategy still works, but is slightly slower than
 /// `COITree::query`.
-pub struct SortedQuerent<'a, T, I>
+pub struct AVXSortedQuerent<'a, T, I>
 where
-    T: Clone,
+    T: Default + Clone,
     I: IntWithMax,
 {
-    tree: &'a COITree<T, I>,
+    tree: &'a AVXCOITree<T, I>,
     prev_first: i32,
     prev_last: i32,
     overlapping_intervals: Vec<Interval<&'a T>>,
 }
 
-impl<'a, T, I> SortedQuerent<'a, T, I>
+impl<'a, T, I> SortedQuerent<'a> for AVXSortedQuerent<'a, T, I>
 where
-    T: Default + Copy + Clone,
+    T: Default + Clone + Copy,
     I: IntWithMax,
 {
+    type Metadata = T;
+    type Index = I;
+    type Item = Interval<&'a T>;
+    type Iter = AVXCOITreeIterator<'a, T, I>;
+    type Tree = AVXCOITree<T, I>;
+
     /// Construct a new `SortedQuerent` to perform a sequence. queries.
-    pub fn new(tree: &'a COITree<T, I>) -> SortedQuerent<'a, T, I> {
+    fn new(tree: &'a AVXCOITree<T, I>) -> AVXSortedQuerent<'a, T, I> {
         let overlapping_intervals: Vec<Interval<&'a T>> = Vec::new();
-        SortedQuerent {
+        AVXSortedQuerent {
             tree,
             prev_first: -1,
             prev_last: -1,
@@ -977,9 +888,9 @@ where
     /// `[first, last]` and call `visit` on each. Works equivalently to
     /// `COITrees::query` but queries that overlap prior queries will potentially
     /// be faster.
-    pub fn query<F>(&mut self, first: i32, last: i32, mut visit: F)
+    fn query<F>(&mut self, first: i32, last: i32, mut visit: F)
     where
-        F: FnMut(Interval<&'a T>),
+        F: FnMut(&Interval<&'a T>),
     {
         if self.tree.is_empty() {
             return;
@@ -990,7 +901,7 @@ where
             // no overlap with previous query. have to resort to regular query strategy
             self.overlapping_intervals.clear();
             self.tree
-                .query(first, last, |node| self.overlapping_intervals.push(node));
+                .query(first, last, |node| self.overlapping_intervals.push(*node));
         } else {
             // successor query, exploit the overlap
 
@@ -1039,7 +950,7 @@ where
 
         // call visit on everything
         for overlapping_interval in &self.overlapping_intervals {
-            visit(*overlapping_interval);
+            visit(overlapping_interval);
         }
 
         self.prev_first = first;

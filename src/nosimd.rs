@@ -10,14 +10,13 @@
 //! The data structure `COITree` is constructed with an array of `IntervalNode`
 //! structs which store integer, end-inclusive intervals along with associated
 //! metadata. The tree can be queried directly for coverage or overlaps, or
-//! through the intermediary `SortedQuerenty` which keeps track of some state
+//! through the intermediary `SortedQuerent` which keeps track of some state
 //! to accelerate overlaping queries.
 
 use std::cmp::Ordering;
-use std::convert::{TryFrom, TryInto};
 use std::fmt::Debug;
-use std::marker::Copy;
-use std::ops::{AddAssign, SubAssign};
+use std::iter::IntoIterator;
+use super::interval::{AnnotatedInterval, Interval, IntervalTree, IntWithMax, SortedQuerent};
 
 // Small subtrees at the bottom of the tree are stored in sorted order
 // This gives the upper bound on the size of such subtrees. Performance isn't
@@ -29,70 +28,8 @@ const SIMPLE_SUBTREE_CUTOFF: usize = 64;
 // is a above this number it becomes a simple subtree.
 const SIMPLE_SUBTREE_DENSITY_CUTOFF: f32 = 0.2;
 
-/// A trait facilitating COITree index types.
-pub trait IntWithMax:
-    TryInto<usize> + TryFrom<usize> + Copy + Default + PartialEq + Ord + AddAssign + SubAssign
-{
-    const MAX: Self;
 
-    // typically the branch here should be optimized out, because we are
-    // converting, e.g. a u32 to a usize on 64-bit system.
-    #[inline(always)]
-    fn to_usize(self) -> usize {
-        match self.try_into() {
-            Ok(x) => x,
-            Err(_) => panic!("index conversion to usize failed"),
-        }
-    }
-
-    #[inline(always)]
-    fn from_usize(x: usize) -> Self {
-        match x.try_into() {
-            Ok(y) => y,
-            Err(_) => panic!("index conversion from usize failed"),
-        }
-    }
-
-    fn one() -> Self {
-        Self::from_usize(1)
-    }
-}
-
-impl IntWithMax for usize {
-    const MAX: usize = usize::MAX;
-}
-
-impl IntWithMax for u32 {
-    const MAX: u32 = u32::MAX;
-}
-
-impl IntWithMax for u16 {
-    const MAX: u16 = u16::MAX;
-}
-
-/// An interval with associated metadata.
-///
-/// Intervals in `COITree` are treated as end-inclusive.
-///
-/// Metadata can be an arbitrary type `T`, but because nodes are stored in contiguous
-/// memory, it may be better to store large metadata outside the node and
-/// use a pointer or reference for the metadata.
-///
-/// # Examples
-/// ```
-/// use coitrees::IntervalNode;
-///
-/// #[derive(Clone)]
-/// struct MyMetadata {
-///     chrom: String,
-///     posstrand: bool
-/// }
-///
-/// let some_interval = IntervalNode::<_, usize>::new(
-///     10, 24000, MyMetadata{chrom: String::from("chr1"), posstrand: false});
-///
-/// assert_eq!(some_interval.len(), 23991);
-/// ```
+/// Internal interval node representation used by BasicCOITree
 #[derive(Clone)]
 pub struct IntervalNode<T, I>
 where
@@ -119,7 +56,7 @@ where
     T: Clone,
     I: IntWithMax,
 {
-    pub fn new(first: i32, last: i32, metadata: T) -> IntervalNode<T, I> {
+    fn new(first: i32, last: i32, metadata: T) -> IntervalNode<T, I> {
         IntervalNode {
             subtree_last: last,
             first,
@@ -130,13 +67,35 @@ where
         }
     }
 
+    fn from_interval<V>(interval: &V) -> IntervalNode<T, I>
+    where V: AnnotatedInterval<T>
+     {
+        return IntervalNode::new(interval.first(), interval.last(), interval.metadata().clone());
+    }
+
     /// Length spanned by the interval. (Interval are end-inclusive.)
     pub fn len(&self) -> i32 {
         (self.last - self.first + 1).max(0)
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.len().eq(&0)
+}
+
+// IntervalNodes are themselves a type of annotated interval
+impl<T, I> AnnotatedInterval<T> for IntervalNode<T, I>
+where
+    T: Clone,
+    I: IntWithMax,
+{
+    fn first(&self) -> i32 {
+        self.first
+    }
+
+    fn last(&self) -> i32 {
+        self.last
+    }
+
+    fn metadata(&self) -> &T {
+        &self.metadata
     }
 }
 
@@ -158,7 +117,7 @@ fn test_interval_len() {
 /// The index type `I` is a typically `usize`, but can be `u32` or `u16`.
 /// It's slightly more efficient to use a smalled index type, assuming there are
 /// fewer than I::MAX-1 intervals to store.
-pub struct COITree<T, I>
+pub struct BasicCOITree<T, I>
 where
     T: Clone,
     I: IntWithMax,
@@ -168,37 +127,15 @@ where
     height: usize,
 }
 
-impl<T, I> COITree<T, I>
+
+impl<'a, T, I> BasicCOITree<T, I>
 where
     T: Clone,
     I: IntWithMax,
 {
-    pub fn new(nodes: Vec<IntervalNode<T, I>>) -> COITree<T, I> {
-        if nodes.len() >= (I::MAX).to_usize() {
-            panic!("COITree construction failed: more intervals than index type can enumerate")
-        }
-
-        let (nodes, root_idx, height) = veb_order(nodes);
-
-        COITree {
-            nodes,
-            root_idx,
-            height,
-        }
-    }
-
-    /// Number of intervals in the set.
-    pub fn len(&self) -> usize {
-        self.nodes.len()
-    }
-
-    /// True iff the set is empty.
-    pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
-    }
-
-    /// Find intervals in the set overlaping the query `[first, last]` and call `visit` on every overlapping node
-    pub fn query<'a, F>(&'a self, first: i32, last: i32, mut visit: F)
+    // Exactly the same as IntervalTree::query, but provides a reference with the
+    // lifetime of the tree (not something we can guarantee with other implementations).
+    fn query_static<F>(&'a self, first: i32, last: i32, mut visit: F)
     where
         F: FnMut(&'a IntervalNode<T, I>),
     {
@@ -206,9 +143,60 @@ where
             query_recursion(&self.nodes, self.root_idx, first, last, &mut visit);
         }
     }
+}
+
+
+impl<'a, T, I> IntervalTree<'a> for BasicCOITree<T, I>
+where
+    T: Clone + 'a,
+    I: IntWithMax + 'a,
+{
+    type Metadata = T;
+    type Index = I;
+    type Item = IntervalNode<T, I>;
+    type Iter = BasicCOITreeIterator<'a, T, I>;
+
+    fn new<'c, U, V>(intervals: U) -> BasicCOITree<T, I>
+    where
+        U: IntoIterator<Item = &'c V>,
+        V: AnnotatedInterval<T> + 'c,
+    {
+        let nodes: Vec<IntervalNode<T,I>> = intervals.into_iter().map(|node| IntervalNode::from_interval(node)).collect();
+        if nodes.len() >= (I::MAX).to_usize() {
+            panic!("BasicCOITree construction failed: more intervals than index type can enumerate")
+        }
+
+        let (nodes, root_idx, height) = veb_order(nodes);
+
+        BasicCOITree {
+            nodes,
+            root_idx,
+            height,
+        }
+    }
+
+    /// Number of intervals in the set.
+    fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// True iff the set is empty.
+    fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    /// Find intervals in the set overlaping the query `[first, last]` and call `visit` on every overlapping node
+    fn query<F>(&'a self, first: i32, last: i32, mut visit: F)
+    where
+        F: FnMut(&IntervalNode<T, I>),
+    {
+        if !self.is_empty() {
+            query_recursion(&self.nodes, self.root_idx, first, last, &mut visit);
+        }
+    }
 
     /// Count the number of intervals in the set overlapping the query `[first, last]`.
-    pub fn query_count(&self, first: i32, last: i32) -> usize {
+    fn query_count(&self, first: i32, last: i32) -> usize {
         if !self.is_empty() {
             query_recursion_count(&self.nodes, self.root_idx, first, last)
         } else {
@@ -219,7 +207,7 @@ where
     /// Return a pair `(count, cov)`, where `count` gives the number of intervals
     /// in the set overlapping the query, and `cov` the number of positions in the query
     /// interval covered by at least one interval in the set.
-    pub fn coverage(&self, first: i32, last: i32) -> (usize, usize) {
+    fn coverage(&self, first: i32, last: i32) -> (usize, usize) {
         assert!(last >= first);
 
         if self.is_empty() {
@@ -239,7 +227,7 @@ where
     }
 
     /// Iterate through the interval set in sorted order by interval start position.
-    pub fn iter(&self) -> COITreeIterator<T, I> {
+    fn iter(&'a self) -> BasicCOITreeIterator<'a, T, I> {
         let mut i = self.root_idx;
         let mut stack: Vec<usize> = Vec::with_capacity(self.height);
         while i < self.nodes.len()
@@ -250,7 +238,7 @@ where
             i = self.nodes[i].left.to_usize();
         }
 
-        COITreeIterator {
+        BasicCOITreeIterator {
             nodes: &self.nodes,
             i,
             count: 0,
@@ -259,21 +247,21 @@ where
     }
 }
 
-impl<'a, T, I> IntoIterator for &'a COITree<T, I>
+impl<'a, T, I> IntoIterator for &'a BasicCOITree<T, I>
 where
     T: Clone,
     I: IntWithMax,
 {
-    type Item = &'a IntervalNode<T, I>;
-    type IntoIter = COITreeIterator<'a, T, I>;
+    type Item = Interval<&'a T>;
+    type IntoIter = BasicCOITreeIterator<'a, T, I>;
 
-    fn into_iter(self) -> COITreeIterator<'a, T, I> {
+    fn into_iter(self) -> BasicCOITreeIterator<'a, T, I> {
         self.iter()
     }
 }
 
 /// Iterate through nodes in a tree in sorted order by interval start position.
-pub struct COITreeIterator<'a, T, I>
+pub struct BasicCOITreeIterator<'a, T, I>
 where
     T: Clone,
     I: IntWithMax,
@@ -284,12 +272,12 @@ where
     stack: Vec<usize>,
 }
 
-impl<'a, T, I> Iterator for COITreeIterator<'a, T, I>
+impl<'a, T, I> Iterator for BasicCOITreeIterator<'a, T, I>
 where
     T: Clone,
     I: IntWithMax,
 {
-    type Item = &'a IntervalNode<T, I>;
+    type Item = Interval<&'a T>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.i >= self.nodes.len() {
@@ -325,7 +313,7 @@ where
         }
 
         self.count += 1;
-        Some(node)
+        Some(Interval::new(node.first, node.last, &node.metadata))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -334,7 +322,7 @@ where
     }
 }
 
-impl<'a, T, I> ExactSizeIterator for COITreeIterator<'a, T, I>
+impl<'a, T, I> ExactSizeIterator for BasicCOITreeIterator<'a, T, I>
 where
     T: Clone,
     I: IntWithMax,
@@ -509,26 +497,32 @@ where
 /// `SortedQuerent` tracks that state. If queries are not sorted or don't
 /// overlap, this strategy still works, but is slightly slower than
 /// `COITree::query`.
-pub struct SortedQuerent<'a, T, I>
+pub struct BasicSortedQuerent<'a, T, I>
 where
     T: Clone,
     I: IntWithMax,
 {
-    tree: &'a COITree<T, I>,
+    tree: &'a BasicCOITree<T, I>,
     prev_first: i32,
     prev_last: i32,
     overlapping_intervals: Vec<&'a IntervalNode<T, I>>,
 }
 
-impl<'a, T, I> SortedQuerent<'a, T, I>
+impl<'a, T, I> SortedQuerent<'a> for BasicSortedQuerent<'a, T, I>
 where
     T: Clone,
     I: IntWithMax,
 {
+    type Metadata = T;
+    type Index = I;
+    type Item = IntervalNode<T, I>;
+    type Iter = BasicCOITreeIterator<'a, T, I>;
+    type Tree = BasicCOITree<T, I>;
+
     /// Construct a new `SortedQuerent` to perform a sequence. queries.
-    pub fn new(tree: &'a COITree<T, I>) -> SortedQuerent<'a, T, I> {
+    fn new(tree: &'a BasicCOITree<T, I>) -> BasicSortedQuerent<'a, T, I> {
         let overlapping_intervals: Vec<&IntervalNode<T, I>> = Vec::new();
-        SortedQuerent {
+        BasicSortedQuerent {
             tree,
             prev_first: -1,
             prev_last: -1,
@@ -540,9 +534,9 @@ where
     /// `[first, last]` and call `visit` on each. Works equivalently to
     /// `COITrees::query` but queries that overlap prior queries will potentially
     /// be faster.
-    pub fn query<F>(&mut self, first: i32, last: i32, mut visit: F)
+    fn query<F>(&mut self, first: i32, last: i32, mut visit: F)
     where
-        F: FnMut(&IntervalNode<T, I>),
+        F: FnMut(&'a IntervalNode<T, I>),
     {
         if self.tree.is_empty() {
             return;
@@ -553,7 +547,7 @@ where
             // no overlap with previous query. have to resort to regular query strategy
             self.overlapping_intervals.clear();
             self.tree
-                .query(first, last, |node| self.overlapping_intervals.push(node));
+                .query_static(first, last, |node| self.overlapping_intervals.push(node));
         } else {
             // successor query, exploit the overlap
 

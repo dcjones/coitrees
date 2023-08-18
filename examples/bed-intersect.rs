@@ -1,4 +1,4 @@
-use coitrees::{COITree, IntervalNode, SortedQuerent};
+use coitrees::*;
 
 use std::error::Error;
 use std::ffi::CString;
@@ -61,7 +61,7 @@ fn parse_bed_line(line: &[u8]) -> (&str, i32, i32) {
     (seqname, first, last)
 }
 
-type IntervalHashMap = FnvHashMap<String, Vec<IntervalNode<(), u32>>>;
+type IntervalHashMap = FnvHashMap<String, Vec<Interval<()>>>;
 
 // Read a bed file into a COITree
 fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<(), u32>>, GenericError> {
@@ -83,7 +83,7 @@ fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<(), u32>>, Gen
             nodes.entry(seqname.to_string()).or_insert(Vec::new())
         };
 
-        node_arr.push(IntervalNode::new(first, last, ()));
+        node_arr.push(Interval::new(first, last, ()));
 
         line_count += 1;
         line.clear();
@@ -99,7 +99,7 @@ fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<(), u32>>, Gen
     let now = Instant::now();
     let mut trees = FnvHashMap::<String, COITree<(), u32>>::default();
     for (seqname, seqname_nodes) in nodes {
-        trees.insert(seqname, COITree::new(seqname_nodes));
+        trees.insert(seqname, COITree::new(&seqname_nodes));
     }
     eprintln!("veb_order: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
@@ -109,7 +109,7 @@ fn read_bed_file(path: &str) -> Result<FnvHashMap<String, COITree<(), u32>>, Gen
 fn read_bed_file_numbered(
     path: &str,
 ) -> Result<FnvHashMap<String, COITree<usize, u32>>, GenericError> {
-    let mut nodes = FnvHashMap::<String, Vec<IntervalNode<usize, u32>>>::default();
+    let mut nodes = FnvHashMap::<String, Vec<Interval<usize>>>::default();
 
     let now = Instant::now();
 
@@ -126,7 +126,7 @@ fn read_bed_file_numbered(
             nodes.entry(seqname.to_string()).or_insert(Vec::new())
         };
 
-        node_arr.push(IntervalNode::new(first, last, node_arr.len()));
+        node_arr.push(Interval::new(first, last, node_arr.len()));
 
         line_count += 1;
         line.clear();
@@ -142,7 +142,7 @@ fn read_bed_file_numbered(
     let now = Instant::now();
     let mut trees = FnvHashMap::<String, COITree<usize, u32>>::default();
     for (seqname, seqname_nodes) in nodes {
-        trees.insert(seqname, COITree::new(seqname_nodes));
+        trees.insert(seqname, COITree::new(&seqname_nodes));
     }
     eprintln!("veb_order: {}s", now.elapsed().as_millis() as f64 / 1000.0);
 
@@ -180,8 +180,8 @@ fn query_bed_files(filename_a: &str, filename_b: &str) -> Result<(), GenericErro
             let linelen = line.len();
             line[linelen - 1] = b'\0';
             libc::printf(
-                b"%s\t%u\n\0".as_ptr() as *const i8,
-                line.as_ptr() as *const i8,
+                b"%s\t%u\n\0".as_ptr() as *const libc::c_char,
+                line.as_ptr() as *const libc::c_char,
                 count as u32,
             );
         }
@@ -201,9 +201,9 @@ fn query_bed_files_tvt(filename_a: &str, filename_b: &str) -> Result<(), Generic
     let a_trees = read_bed_file(filename_a)?;
     let b_trees = read_bed_file_numbered(filename_b)?;
 
-    let mut a_querents = FnvHashMap::<String, SortedQuerent<(), u32>>::default();
+    let mut a_querents = FnvHashMap::<String, COITreeSortedQuerent<(), u32>>::default();
     for (seqname, a_tree) in &a_trees {
-        a_querents.insert(seqname.clone(), SortedQuerent::new(a_tree));
+        a_querents.insert(seqname.clone(), COITreeSortedQuerent::new(a_tree));
     }
 
     let mut total_count = 0;
@@ -218,8 +218,8 @@ fn query_bed_files_tvt(filename_a: &str, filename_b: &str) -> Result<(), Generic
 
                 unsafe {
                     libc::printf(
-                        b"%s\t%d\t%d\t%u\n\0".as_ptr() as *const i8,
-                        c_seqname.as_bytes_with_nul().as_ptr() as *const i8,
+                        b"%s\t%d\t%d\t%u\n\0".as_ptr() as *const libc::c_char,
+                        c_seqname.as_bytes_with_nul().as_ptr() as *const libc::c_char,
                         b_node.first,
                         b_node.last,
                         count as u32,
@@ -267,8 +267,8 @@ fn query_bed_files_coverage(filename_a: &str, filename_b: &str) -> Result<(), Ge
             let linelen = line.len();
             line[linelen - 1] = b'\0';
             libc::printf(
-                b"%s\t%u\t%u\n\0".as_ptr() as *const i8,
-                line.as_ptr() as *const i8,
+                b"%s\t%u\t%u\n\0".as_ptr() as *const libc::c_char,
+                line.as_ptr() as *const libc::c_char,
                 count as u32,
                 cov,
             );
@@ -298,9 +298,9 @@ fn query_bed_files_with_sorted_querent(
     let mut total_count: usize = 0;
     let now = Instant::now();
 
-    let mut querents = FnvHashMap::<String, SortedQuerent<(), u32>>::default();
+    let mut querents = FnvHashMap::<String, COITreeSortedQuerent<(), u32>>::default();
     for (seqname, tree) in &trees {
-        querents.insert(seqname.clone(), SortedQuerent::new(tree));
+        querents.insert(seqname.clone(), COITreeSortedQuerent::new(tree));
     }
 
     while rdr.read_until(b'\n', &mut line).unwrap() > 0 {
@@ -316,8 +316,8 @@ fn query_bed_files_with_sorted_querent(
             let linelen = line.len();
             line[linelen - 1] = b'\0';
             libc::printf(
-                b"%s\t%u\n\0".as_ptr() as *const i8,
-                line.as_ptr() as *const i8,
+                b"%s\t%u\n\0".as_ptr() as *const libc::c_char,
+                line.as_ptr() as *const libc::c_char,
                 count as u32,
             );
         }
