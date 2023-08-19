@@ -53,12 +53,6 @@ where
         assert!(!intervals.is_empty() && intervals.len() <= LANE_SIZE);
 
         unsafe {
-            // let mut max_last = intervals[0].last;
-
-            // for interval in &intervals[1..] {
-            //     max_last = max(max_last, interval.last);
-            // }
-
             let max_last = intervals
                 .iter()
                 .max_by_key(|x| x.last)

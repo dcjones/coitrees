@@ -1,7 +1,5 @@
-#[cfg(feature = "default")]
-
 mod tests {
-    use coitrees::{COITree, IntWithMax, Interval, SortedQuerent};
+    use coitrees::*;
 
     extern crate rand;
     use rand::{thread_rng, Rng};
@@ -127,7 +125,7 @@ mod tests {
         let mut a_hits: Vec<u32> = Vec::new();
         let mut b_hits: Vec<u32> = Vec::new();
 
-        let mut qa = SortedQuerent::new(a);
+        let mut qa = COITreeSortedQuerent::new(a);
 
         queries.sort();
 
@@ -161,7 +159,7 @@ mod tests {
         let mut a_hits: Vec<u32> = Vec::new();
         let mut b_hits: Vec<u32> = Vec::new();
 
-        let mut qa = SortedQuerent::new(a);
+        let mut qa = COITreeSortedQuerent::new(a);
 
         for (query_first, query_last) in queries {
             a_hits.clear();
@@ -217,7 +215,7 @@ mod tests {
 
         b.sort_unstable_by_key(|node| node.first);
 
-        let a = COITree::new(b.clone());
+        let a = COITree::new(&b);
 
         let mut queries: Vec<(i32, i32)> = (0..num_queries)
             .map(|_| random_interval(min_first, max_last, query_min_len, query_max_len))
@@ -334,6 +332,6 @@ mod tests {
             });
         }
 
-        let _tree: COITree<u32, u16> = COITree::new(b);
+        let _tree: COITree<u32, u16> = COITree::new(&b);
     }
 }

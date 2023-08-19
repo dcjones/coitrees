@@ -55,8 +55,8 @@ where
     T: Clone,
     I: IntWithMax,
 {
-    fn new(first: i32, last: i32, metadata: T) -> IntervalNode<T, I> {
-        IntervalNode {
+    pub fn new(first: i32, last: i32, metadata: T) -> IntervalNode<T, I> {
+        Self {
             subtree_last: last,
             first,
             last,
@@ -70,7 +70,7 @@ where
     where
         V: GenericInterval<T>,
     {
-        return IntervalNode::new(
+        return Self::new(
             interval.first(),
             interval.last(),
             interval.metadata().clone(),
