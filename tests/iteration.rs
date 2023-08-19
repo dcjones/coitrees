@@ -38,11 +38,6 @@ mod tests {
         let mut seen: HashSet<usize> = HashSet::new();
 
         for node in &a {
-            eprintln!(
-                "DEBUGPRINT[2]: iteration.rs:41: last_first={} node.first={}",
-                last_first, node.first
-            );
-
             assert!(last_first <= node.first);
 
             last_first = node.first;
