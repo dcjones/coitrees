@@ -102,12 +102,12 @@ where
     }
 
     fn first(&self, i: usize) -> i32 {
-        assert!(i < 4);
+        assert!(i < LANE_SIZE);
         (unsafe { transmute::<&i32x4, &[i32; LANE_SIZE]>(&self.firsts) }[i])
     }
 
     fn last(&self, i: usize) -> i32 {
-        assert!(i < 4);
+        assert!(i < LANE_SIZE);
         (unsafe { transmute::<&i32x4, &[i32; LANE_SIZE]>(&self.lasts) }[i])
     }
 
@@ -345,7 +345,13 @@ where
     {
         let mut intervals: Vec<_> = intervals
             .into_iter()
-            .map(|interval| Interval::new(interval.first(), interval.last(), *interval.metadata()))
+            .map(|interval| {
+                Interval::new(
+                    interval.first(),
+                    interval.last(),
+                    interval.metadata().clone(),
+                )
+            })
             .collect();
 
         if intervals.len() >= (I::MAX).to_usize() {
@@ -749,7 +755,7 @@ where
 /// `COITree::query`.
 pub struct NeonSortedQuerent<'a, T, I>
 where
-    T: Clone,
+    T: Default + Clone,
     I: IntWithMax,
 {
     tree: &'a NeonCOITree<T, I>,
