@@ -345,13 +345,7 @@ where
     {
         let mut intervals: Vec<_> = intervals
             .into_iter()
-            .map(|interval| {
-                Interval::new(
-                    interval.first(),
-                    interval.last(),
-                    interval.metadata().clone(),
-                )
-            })
+            .map(|interval| Interval::new(interval.first(), interval.last(), *interval.metadata()))
             .collect();
 
         if intervals.len() >= (I::MAX).to_usize() {
