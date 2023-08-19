@@ -70,9 +70,7 @@ mod tests {
             a_hits.clear();
             b_hits.clear();
 
-            a.query(*query_first, *query_last, |node| {
-                a_hits.push(*node.metadata)
-            });
+            a.query(*query_first, *query_last, |node| a_hits.push(node.metadata));
 
             brute_force_query(b, *query_first, *query_last, |node| {
                 b_hits.push(node.metadata)
@@ -133,9 +131,7 @@ mod tests {
             a_hits.clear();
             b_hits.clear();
 
-            qa.query(*query_first, *query_last, |node| {
-                a_hits.push(*node.metadata)
-            });
+            qa.query(*query_first, *query_last, |node| a_hits.push(node.metadata));
 
             brute_force_query(b, *query_first, *query_last, |node| {
                 b_hits.push(node.metadata)
@@ -165,9 +161,7 @@ mod tests {
             a_hits.clear();
             b_hits.clear();
 
-            qa.query(*query_first, *query_last, |node| {
-                a_hits.push(*node.metadata)
-            });
+            qa.query(*query_first, *query_last, |node| a_hits.push(node.metadata));
 
             brute_force_query(b, *query_first, *query_last, |node| {
                 b_hits.push(node.metadata)
