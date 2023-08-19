@@ -1,10 +1,10 @@
 use std::arch::aarch64::*;
 
+use super::interval::{GenericInterval, IntWithMax, Interval, IntervalTree, SortedQuerent};
 use std::cmp::{max, Ordering};
 use std::fmt::Debug;
 use std::marker::Copy;
 use std::mem::transmute;
-use super::interval::{GenericInterval, Interval, IntervalTree, IntWithMax, SortedQuerent};
 
 #[allow(non_camel_case_types)]
 type i32x4 = int32x4_t;
@@ -20,7 +20,6 @@ const SIMPLE_SUBTREE_CUTOFF: usize = 8;
 // are more efficient to query linearly. When the expected proportion of hits
 // is a above this number it becomes a simple subtree.
 const SIMPLE_SUBTREE_DENSITY_CUTOFF: f32 = 0.2;
-
 
 /// Node in the interval tree. Each node holds a chunk of 8 intervals.
 #[derive(Clone)]
@@ -335,7 +334,6 @@ where
     }
 }
 
-
 impl<'a, T, I> IntervalTree<'a> for NeonCOITree<T, I>
 where
     T: Default + Copy + Clone + 'a,
@@ -349,10 +347,18 @@ where
     fn new<'b, U, V>(intervals: U) -> NeonCOITree<T, I>
     where
         U: IntoIterator<Item = &'b V>,
-        V: GenericInterval<T> + 'b
+        V: GenericInterval<T> + 'b,
     {
-        let mut intervals: Vec<_> = intervals.into_iter().map(
-            |interval| Interval::new(interval.first(), interval.last(), interval.metadata().clone())).collect();
+        let mut intervals: Vec<_> = intervals
+            .into_iter()
+            .map(|interval| {
+                Interval::new(
+                    interval.first(),
+                    interval.last(),
+                    interval.metadata().clone(),
+                )
+            })
+            .collect();
 
         if intervals.len() >= (I::MAX).to_usize() {
             panic!("NeonCOITree construction failed: more intervals than index type can enumerate")
@@ -1411,9 +1417,10 @@ mod tests {
             .map(|i| Interval::new(i, i + 1, i as usize))
             .collect::<Vec<Interval<usize>>>();
 
-        let tree = COITree::<usize, u32>::new(intervals);
+        let tree = NeonCOITree::<usize, u32>::new(&intervals);
+
         let mut metadata = Vec::new();
-        tree.query(0, 3, |node| metadata.push(node));
+        tree.query(0, 3, |node| metadata.push(node.clone()));
 
         println!("{:?}", metadata);
     }

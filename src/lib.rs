@@ -13,7 +13,6 @@
 //! through the intermediary `SortedQuerenty` which keeps track of some state
 //! to accelerate overlaping queries.
 
-
 mod interval;
 pub use interval::*;
 
@@ -31,14 +30,22 @@ mod neon;
 pub use neon::*;
 
 // These are necessary mutually exclusive
-#[cfg(all(not(feature = "nosimd"), not(target_feature = "avx2"), not(target_feature = "neon")))]
+#[cfg(all(
+    not(feature = "nosimd"),
+    not(target_feature = "avx2"),
+    not(target_feature = "neon")
+))]
 pub type COITree<T, I> = BasicCOITree<T, I>;
 #[cfg(all(target_feature = "avx2", not(feature = "nosimd")))]
 pub type COITree<T, I> = AVXCOITree<T, I>;
 #[cfg(all(target_feature = "neon", not(feature = "nosimd")))]
 pub type COITree<T, I> = NeonCOITree<T, I>;
 
-#[cfg(all(not(feature = "nosimd"), not(target_feature = "avx2"), not(target_feature = "neon")))]
+#[cfg(all(
+    not(feature = "nosimd"),
+    not(target_feature = "avx2"),
+    not(target_feature = "neon")
+))]
 pub type COITreeSortedQuerent<'a, T, I> = BasicSortedQuerent<'a, T, I>;
 #[cfg(all(target_feature = "avx2", not(feature = "nosimd")))]
 pub type COITreeSortedQuerent<'a, T, I> = AVXSortedQuerent<'a, T, I>;

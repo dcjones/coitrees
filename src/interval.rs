@@ -1,6 +1,5 @@
-
-use std::ops::{AddAssign, SubAssign};
 use std::iter::IntoIterator;
+use std::ops::{AddAssign, SubAssign};
 
 pub trait GenericInterval<T>
 where
@@ -30,6 +29,7 @@ where
 /// # Examples
 /// ```
 /// use coitrees::Interval;
+/// use coitrees::GenericInterval;
 ///
 /// #[derive(Clone)]
 /// struct MyMetadata {
@@ -64,15 +64,11 @@ where
             metadata,
         }
     }
-
-    pub fn len(&self) -> i32 {
-        0.max(self.last - self.first + 1)
-    }
 }
 
 impl<T> GenericInterval<T> for Interval<T>
 where
-    T: Clone
+    T: Clone,
 {
     fn first(&self) -> i32 {
         self.first
@@ -87,10 +83,9 @@ where
     }
 }
 
-
 impl<'a, T> GenericInterval<T> for Interval<&'a T>
 where
-    T: Clone
+    T: Clone,
 {
     fn first(&self) -> i32 {
         self.first
@@ -104,7 +99,6 @@ where
         self.metadata
     }
 }
-
 
 #[test]
 fn test_interval_len() {
@@ -121,7 +115,6 @@ fn test_interval_len() {
     assert_eq!(make_interval(1, 1).len(), 1);
     assert_eq!(make_interval(1, 2).len(), 2);
 }
-
 
 /// A trait facilitating COITree index types.
 pub trait IntWithMax:
@@ -164,10 +157,8 @@ impl IntWithMax for u16 {
     const MAX: u16 = u16::MAX;
 }
 
-
 /// Basic interval tree interface supported by each COITree implementation.
-pub trait IntervalTree<'a>
-{
+pub trait IntervalTree<'a> {
     type Metadata: Clone + 'a;
     type Index: IntWithMax;
     type Item: GenericInterval<Self::Metadata> + 'a;
@@ -192,13 +183,18 @@ pub trait IntervalTree<'a>
     fn iter(&'a self) -> Self::Iter;
 }
 
-
 pub trait SortedQuerent<'a> {
     type Metadata: Clone + 'a;
     type Index: IntWithMax;
     type Item: GenericInterval<Self::Metadata> + 'a;
     type Iter: Iterator<Item = Interval<&'a Self::Metadata>>;
-    type Tree: IntervalTree<'a, Metadata = Self::Metadata, Index = Self::Index, Item = Self::Item, Iter = Self::Iter> + 'a;
+    type Tree: IntervalTree<
+            'a,
+            Metadata = Self::Metadata,
+            Index = Self::Index,
+            Item = Self::Item,
+            Iter = Self::Iter,
+        > + 'a;
 
     fn new(tree: &'a Self::Tree) -> Self;
 
@@ -206,4 +202,3 @@ pub trait SortedQuerent<'a> {
     where
         F: FnMut(&Self::Item);
 }
-

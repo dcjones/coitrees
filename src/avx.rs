@@ -3,11 +3,11 @@ use std::arch::x86_64::{
     _mm256_set1_epi32, _mm256_set_epi32,
 };
 
+use super::interval::{GenericInterval, IntWithMax, Interval, IntervalTree, SortedQuerent};
 use std::cmp::{max, Ordering};
 use std::fmt::Debug;
 use std::marker::Copy;
 use std::mem::transmute;
-use super::interval::{GenericInterval, Interval, IntervalTree, IntWithMax, SortedQuerent};
 
 #[allow(non_camel_case_types)]
 type i32x8 = __m256i;
@@ -21,7 +21,6 @@ const SIMPLE_SUBTREE_CUTOFF: usize = 8;
 // are more efficient to query linearly. When the expected proportion of hits
 // is a above this number it becomes a simple subtree.
 const SIMPLE_SUBTREE_DENSITY_CUTOFF: f32 = 0.2;
-
 
 /// Node in the interval tree. Each node holds a chunk of 8 intervals.
 #[derive(Clone)]
@@ -395,14 +394,12 @@ where
     height: usize,
 }
 
-
 impl<T, I> AVXCOITree<T, I>
 where
     T: Default + Copy + Clone,
     I: IntWithMax,
 {
-    fn chunk_intervals(intervals: Vec<Interval<T>>) -> Vec<IntervalNode<T, I>>
-    {
+    fn chunk_intervals(intervals: Vec<Interval<T>>) -> Vec<IntervalNode<T, I>> {
         let n = intervals.len();
         let num_chunks = (n / 8) + (n % 8 != 0) as usize;
         let mut nodes: Vec<IntervalNode<T, I>> = Vec::with_capacity(num_chunks);
@@ -447,10 +444,18 @@ where
     fn new<'b, U, V>(intervals: U) -> AVXCOITree<T, I>
     where
         U: IntoIterator<Item = &'b V>,
-        V: GenericInterval<T> + 'b
+        V: GenericInterval<T> + 'b,
     {
-        let mut intervals: Vec<_> = intervals.into_iter().map(
-            |interval| Interval::new(interval.first(), interval.last(), interval.metadata().clone())).collect();
+        let mut intervals: Vec<_> = intervals
+            .into_iter()
+            .map(|interval| {
+                Interval::new(
+                    interval.first(),
+                    interval.last(),
+                    interval.metadata().clone(),
+                )
+            })
+            .collect();
 
         if intervals.len() >= (I::MAX).to_usize() {
             panic!("COITree construction failed: more intervals than index type can enumerate")
