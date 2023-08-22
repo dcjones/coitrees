@@ -1,4 +1,3 @@
-
 Copyright © 2019 Daniel C. Jones (dcjones@cs.washington.edu)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
