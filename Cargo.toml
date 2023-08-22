@@ -1,8 +1,8 @@
 [package]
 name = "coitrees"
 description = "A very fast data structure for overlap queries on sets of intervals."
-version = "0.2.1"
-authors = ["Daniel C. Jones <dcjones@cs.washington.edu>"]
+version = "0.3.0"
+authors = ["Daniel C. Jones <djones3@fredhutch.org>"]
 edition = "2021"
 repository = "https://github.com/dcjones/coitrees"
 documentation = "https://docs.rs/coitrees"

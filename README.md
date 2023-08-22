@@ -18,6 +18,14 @@ of the results of the previous query. When a query overlaps the previous one,
 the results from that previous query can be reused to dramatically accelerate
 the current one. (In the benchmarks, this is the `--sorted` option.)
 
+Some operations can further be sped up using SIMD instructions. Two COITree
+variants are implemented to exloit AVX2 instructions on x86-64 cpus
+(`AVXCOITree`), and Neon instructions on ARM cpus (`NeonCOITree`). The `COITree`
+type is oppurtunistically defined to one of these types if the right instruction
+set is detected. Typically it's necessary to compile with the environment
+variable `RUSTFLAGS="-Ctarget-cpu=native"` set for this to work. The fallback
+implemntation (`BasicCOITree`) supports any platform rust compiles to and
+remains highly efficient.
 
 # Trying Out
 
