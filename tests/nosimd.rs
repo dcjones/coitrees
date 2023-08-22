@@ -1,5 +1,3 @@
-#[cfg(all(feature = "nosimd", not(feature = "default")))]
-
 mod tests {
     use coitrees::*;
     use rand::{thread_rng, Rng};
@@ -31,7 +29,7 @@ mod tests {
                 b.push(IntervalNode::new(first, last, i));
             }
 
-            let a = COITree::new(b.clone());
+            let a: COITree<usize, usize> = COITree::new(&b);
 
             // check that intervals are sorted and that every value is generated
             let mut last_first = i32::min_value();
@@ -39,7 +37,7 @@ mod tests {
             for node in &a {
                 assert!(last_first <= node.first);
                 last_first = node.first;
-                seen.insert(node.metadata);
+                seen.insert(*node.metadata);
             }
             assert_eq!(seen.len(), n);
         }
@@ -129,7 +127,9 @@ mod tests {
                 a_hits.clear();
                 b_hits.clear();
 
-                a.query(*query_first, *query_last, |node| a_hits.push(node.metadata));
+                a.query(*query_first, *query_last, |node| {
+                    a_hits.push(node.metadata.clone())
+                });
 
                 brute_force_query(b, *query_first, *query_last, |node| {
                     b_hits.push(node.metadata)
@@ -188,7 +188,7 @@ mod tests {
             let mut a_hits: Vec<u32> = Vec::new();
             let mut b_hits: Vec<u32> = Vec::new();
 
-            let mut qa = SortedQuerent::new(a);
+            let mut qa = COITreeSortedQuerent::new(a);
 
             queries.sort();
 
@@ -196,7 +196,9 @@ mod tests {
                 a_hits.clear();
                 b_hits.clear();
 
-                qa.query(*query_first, *query_last, |node| a_hits.push(node.metadata));
+                qa.query(*query_first, *query_last, |node| {
+                    a_hits.push(node.metadata.clone())
+                });
 
                 brute_force_query(b, *query_first, *query_last, |node| {
                     b_hits.push(node.metadata)
@@ -220,13 +222,15 @@ mod tests {
             let mut a_hits: Vec<u32> = Vec::new();
             let mut b_hits: Vec<u32> = Vec::new();
 
-            let mut qa = SortedQuerent::new(a);
+            let mut qa = COITreeSortedQuerent::new(a);
 
             for (query_first, query_last) in queries {
                 a_hits.clear();
                 b_hits.clear();
 
-                qa.query(*query_first, *query_last, |node| a_hits.push(node.metadata));
+                qa.query(*query_first, *query_last, |node| {
+                    a_hits.push(node.metadata.clone())
+                });
 
                 brute_force_query(b, *query_first, *query_last, |node| {
                     b_hits.push(node.metadata)
@@ -273,7 +277,7 @@ mod tests {
             }
             b.sort_unstable_by_key(|node| node.first);
 
-            let a = COITree::new(b.clone());
+            let a = COITree::new(&b);
 
             let mut queries: Vec<(i32, i32)> = Vec::with_capacity(num_queries);
             for _ in 0..num_queries {
@@ -394,7 +398,7 @@ mod tests {
                 b.push(IntervalNode::new(first, last, i as u32));
             }
 
-            let _tree: COITree<u32, u16> = COITree::new(b);
+            let _tree: COITree<u32, u16> = COITree::new(&b);
         }
     }
 }

@@ -1,7 +1,5 @@
-#[cfg(feature = "default")]
-
 mod tests {
-    use coitrees::{COITree, Interval};
+    use coitrees::{COITree, Interval, IntervalTree};
 
     extern crate rand;
     use rand::{thread_rng, Rng};
@@ -32,7 +30,7 @@ mod tests {
             })
             .collect::<Vec<Interval<usize>>>();
 
-        let a: COITree<usize, usize> = COITree::new(b);
+        let a: COITree<usize, usize> = COITree::new(&b);
 
         // check that intervals are sorted and that every value is generated
         let mut last_first = i32::min_value();
@@ -40,11 +38,6 @@ mod tests {
         let mut seen: HashSet<usize> = HashSet::new();
 
         for node in &a {
-            eprintln!(
-                "DEBUGPRINT[2]: iteration.rs:41: last_first={} node.first={}",
-                last_first, node.first
-            );
-
             assert!(last_first <= node.first);
 
             last_first = node.first;

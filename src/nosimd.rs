@@ -13,10 +13,10 @@
 //! through the intermediary `SortedQuerent` which keeps track of some state
 //! to accelerate overlaping queries.
 
+use super::interval::{GenericInterval, IntWithMax, Interval, IntervalTree, SortedQuerent};
 use std::cmp::Ordering;
 use std::fmt::Debug;
 use std::iter::IntoIterator;
-use super::interval::{GenericInterval, Interval, IntervalTree, IntWithMax, SortedQuerent};
 
 // Small subtrees at the bottom of the tree are stored in sorted order
 // This gives the upper bound on the size of such subtrees. Performance isn't
@@ -27,7 +27,6 @@ const SIMPLE_SUBTREE_CUTOFF: usize = 64;
 // are more efficient to query linearly. When the expected proportion of hits
 // is a above this number it becomes a simple subtree.
 const SIMPLE_SUBTREE_DENSITY_CUTOFF: f32 = 0.2;
-
 
 /// Internal interval node representation used by BasicCOITree
 #[derive(Clone)]
@@ -56,8 +55,8 @@ where
     T: Clone,
     I: IntWithMax,
 {
-    fn new(first: i32, last: i32, metadata: T) -> IntervalNode<T, I> {
-        IntervalNode {
+    pub fn new(first: i32, last: i32, metadata: T) -> IntervalNode<T, I> {
+        Self {
             subtree_last: last,
             first,
             last,
@@ -68,16 +67,21 @@ where
     }
 
     fn from_interval<V>(interval: &V) -> IntervalNode<T, I>
-    where V: GenericInterval<T>
-     {
-        return IntervalNode::new(interval.first(), interval.last(), interval.metadata().clone());
+    where
+        V: GenericInterval<T>,
+    {
+        return Self::new(
+            interval.first(),
+            interval.last(),
+            interval.metadata().clone(),
+        );
     }
 
     /// Length spanned by the interval. (Interval are end-inclusive.)
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> i32 {
         (self.last - self.first + 1).max(0)
     }
-
 }
 
 // IntervalNodes are themselves a type of annotated interval
@@ -127,7 +131,6 @@ where
     height: usize,
 }
 
-
 impl<'a, T, I> BasicCOITree<T, I>
 where
     T: Clone,
@@ -145,7 +148,6 @@ where
     }
 }
 
-
 impl<'a, T, I> IntervalTree<'a> for BasicCOITree<T, I>
 where
     T: Clone + 'a,
@@ -161,7 +163,10 @@ where
         U: IntoIterator<Item = &'c V>,
         V: GenericInterval<T> + 'c,
     {
-        let nodes: Vec<IntervalNode<T,I>> = intervals.into_iter().map(|node| IntervalNode::from_interval(node)).collect();
+        let nodes: Vec<IntervalNode<T, I>> = intervals
+            .into_iter()
+            .map(|node| IntervalNode::from_interval(node))
+            .collect();
         if nodes.len() >= (I::MAX).to_usize() {
             panic!("BasicCOITree construction failed: more intervals than index type can enumerate")
         }
