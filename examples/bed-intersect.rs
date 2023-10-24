@@ -353,7 +353,7 @@ struct Args {
     tree_vs_tree: bool,
 
     /// compute proportion of queries covered
-    #[arg(short = 'c')]
+    #[arg(short = 'c', long)]
     coverage: bool,
 }
 

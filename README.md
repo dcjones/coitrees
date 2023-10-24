@@ -7,7 +7,7 @@ static set of integer intervals, with genomic intervals in mind.
 Borrowing from [cgranges](https://github.com/lh3/cgranges), this data
 structure stores intervals in contiguous memory, but improves query
 performance by storing the nodes in in-order [van Emde Boas
-layout](http://erikdemaine.org/papers/FOCS2000b/paper.pdf) layout. Computing
+layout](http://erikdemaine.org/papers/FOCS2000b/paper.pdf). Computing
 the layout requires some extra time and memory, but improves average cache
 locality for queries of the tree. If the interval set is relatively large,
 and a sufficiently large number of queries are performed, it tends to out-perform
@@ -19,7 +19,7 @@ the results from that previous query can be reused to dramatically accelerate
 the current one. (In the benchmarks, this is the `--sorted` option.)
 
 Some operations can further be sped up using SIMD instructions. Two COITree
-variants are implemented to exloit AVX2 instructions on x86-64 cpus
+variants are implemented to exploit AVX2 instructions on x86-64 cpus
 (`AVXCOITree`), and Neon instructions on ARM cpus (`NeonCOITree`). The `COITree`
 type is oppurtunistically defined to one of these types if the right instruction
 set is detected. Typically it's necessary to compile with the environment
@@ -47,15 +47,15 @@ million lines of `B`.
 
 |                                     |     A vs B |     B vs A |  A vs A  | B' vs B'   |
 | ----------------------------------- | ---------: | ---------: | -------: | ---------: |
-| coitrees AVX                        |      10.1s |   **3.6s** | **0.6s** |      2.3s  |
-| coitrees AVX (`--sorted`)           |       6.5s |       4.9s | **0.6s** |  **0.6s**  |
-| coitrees                            |      12.0s |       5.9s |     0.8s |      7.7s  |
-| coitrees (`--sorted`)               |   **6.0s** |       6.0s | **0.6s** |  **0.6s**  |
-| cgranges (`bedcov-cr -c`)           |      34.9s |       6.6s |     2.0s |     16.0s  |
-| AIList                              |      13.2s |      10.1s |     1.1s |     24.3s  |
-| CITree                              |      20.6s |      14.0s |     1.5s |     45.6s  |
-| NCList                              |      23.3s |      19.9s |     2.0s |     41.7s  |
-| AITree                              |      22.2s |      26.4s |     2.2s |     60.2s  |
+| coitrees AVX                        |      11.8s |   **3.7s** |      0.7 |      5.3s  |
+| coitrees AVX (`--sorted`)           |       6.4s |       4.2s | **0.6s** |  **0.5s**  |
+| coitrees                            |      11.4s |       5.2s |     0.8s |      8.3s  |
+| coitrees (`--sorted`)               |   **5.8s** |       5.4s | **0.6s** |  **0.5s**  |
+| cgranges (`bedcov-cr -c`)           |      35.4s |       6.6s |     2.0s |     17.6s  |
+| AIList                              |      13.8s |      10.1s |     1.1s |     18.4s  |
+| CITree                              |      20.1s |      13.5s |     1.6s |     45.7s  |
+| NCList                              |      22.5s |      16.8s |     1.9s |     39.8s  |
+| AITree                              |      23.8s |      26.3s |     2.1s |     63.4s  |
 | `bedtools coverage -counts -sorted` |     257.5s |     295.6s |    71.6s |   2130.9s  |
 | `bedtools coverage -counts`         |     322.4s |     378.5s |    75.0s |   3595.9s  |
 
@@ -63,32 +63,32 @@ million lines of `B`.
 
 |                                     |     A vs B |     B vs A |  A vs A  | B' vs B'   |
 | ----------------------------------- | ---------: | ---------: | -------: | ---------: |
-| coitrees AVX                        |      16.0s |   **4.8s** | **1.0s** | **12.0s**  |
-| coitrees                            |  **14.2s** |       6.8s | **1.0s** |     14.6s  |
-| cgranges                            |      37.3s |       7.8s |     2.2s |     29.4s  |
-| CITree                              |      23.2s |      26.5s |     2.0s |    161.1s  |
+| coitrees AVX                        |      18.2s |   **4.8s** |     1.1s |      16.0s |
+| coitrees                            |  **14.6s** |       5.7s | **1.0s** |  **12.0s** |
+| cgranges                            |      38.4s |       8.1s |     2.2s |     31.0s  |
+| CITree                              |      23.2s |      25.6s |     2.0s |    160.4s  |
 
 ## Intervals in randomized order
 
 |                                     |     A vs B |     B vs A | A vs A   | B' vs B'  |
 | ----------------------------------- | ---------: | ---------: | -------: | --------: |
-| coitrees AVX                        |  **20.8s** |   **7.5s** | **1.5s** |  **3.3s** |
-| coitrees                            |      24.2s |      10.1s |     1.9s |      9.3s |
-| cgranges (`bedcov-cr -c`)           |      57.6s |      11.1s |     3.4s |     18.4s |
-| AIList                              |      33.4s |      21.5s |     2.6s |     24.9s |
-| CITree                              |      38.2s |      19.3s |     2.8s |     45.8s |
-| NCList                              |      40.0s |      27.9s |     3.6s |     43.4s |
-| AITree                              |     228.7s |     147.0s |    16.3s |    883.4s |
+| coitrees AVX                        |  **23.9s** |   **7.2s** | **1.6s** |  **6.1s** |
+| coitrees                            |      24.2s |       8.9s |     1.9s |      9.4s |
+| cgranges (`bedcov-cr -c`)           |      55.7s |      11.1s |     3.3s |     19.6s |
+| AIList                              |      31.2s |      18.2s |     2.3s |     19.3s |
+| CITree                              |      39.4s |      19.0s |     2.9s |     47.1s |
+| NCList                              |      42.7s |      23.8s |     3.4s |     44.0s |
+| AITree                              |     225.3s |     134.8s |    14.7s |    921.6s |
 | `bedtools coverage -counts`         |    1160.4s |     849.6s |   104.5s |   9254.6s |
 
 ### With coverage
 
 |                                     |     A vs B |     B vs A |  A vs A  | B' vs B'   |
 | ----------------------------------- | ---------: | ---------: | -------: | ---------: |
-| coitrees AVX                        |  **31.0s** |   **9.5s** | **2.0s** | **13.9s**  |
-| coitrees                            |      31.8s |      10.5s |     2.2s |     16.5s  |
-| cgranges                            |      57.3s |      12.7s |     3.5s |     30.9s  |
-| CITree                              |      47.5s |      33.3s |     3.7s |    170.8s  |
+| coitrees AVX                        |      34.3s |   **8.8s** | **2.2s** |     16.3s  |
+| coitrees                            |  **29.6s** |       9.7s |     2.3s | **13.1s**  |
+| cgranges                            |      57.6s |      12.5s |     3.6s |     32.6s  |
+| CITree                              |      50.0s |      32.5s |     3.8s |    170.4s  |
 
 
 All benchmarks run on a ryzen 5950x.
