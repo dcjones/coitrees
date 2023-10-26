@@ -28,7 +28,7 @@ remains highly efficient.
 
 # Trying Out
 
-The Minimum Supported Rust Version (MSRV) is 1.62.0.
+The Minimum Supported Rust Version (MSRV) is 1.70.0.
 This is primary a library for use in other programs, but for benchmarking
 purposes it includes a program for intersecting BED files.
 
