@@ -30,3 +30,12 @@ repos:
     hooks:
       - id: typos
         exclude: "extc|svg|psl|CHANGELOG"
+
+  - repo: https://github.com/charliermarsh/ruff-pre-commit
+    rev: "v0.1.2"
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix, --unsafe-fixes]
+        files: ^py-coitrees/
+      - id: ruff-format
+        files: ^py-coitrees/
