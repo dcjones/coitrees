@@ -112,7 +112,9 @@ jobs:
       MSRV_VERSION: 1.62.0
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Install MSRV toolchain
         uses: actions-rs/toolchain@v1
@@ -132,30 +134,3 @@ jobs:
         with:
           command: test
           args: --all --no-fail-fast
-
-  Coverage:
-    needs: Formatting
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Install nightly toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: nightly
-          override: true
-
-      - name: Install and run cargo-tarpaulin
-        uses: actions-rs/tarpaulin@v0.1
-        with:
-          version: "0.26.0"
-          args: "--workspace --all-features --run-types Tests,Doctests --out Lcov --timeout 300"
-
-      - name: Upload coverage
-        uses: coverallsapp/github-action@v1
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          path-to-lcov: ./lcov.info
