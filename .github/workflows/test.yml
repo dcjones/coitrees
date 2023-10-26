@@ -2,9 +2,28 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches:
+      - main
+    paths:
+      - src/**
+      - examples/**
+      - Cargo.toml
+      - .github/workflows/test.yml
+
   pull_request:
-    branches: [master]
+    paths:
+      - src/**
+      - examples/**
+      - Cargo.toml
+      - .github/workflows/test.yml
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+#ref https://github.com/pola-rs/polars/blob/main/.github/workflows/test-rust.yml
+env:
+  RUSTFLAGS: -C debuginfo=0 # Do not produce debug symbols to keep memory usage down
 
 jobs:
   Formatting:
@@ -12,6 +31,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
+          de
 
       - name: Install stable toolchain
         uses: actions-rs/toolchain@v1
@@ -63,7 +83,9 @@ jobs:
             rust: stable
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - uses: actions-rs/toolchain@v1
         with:
@@ -115,7 +137,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Install nightly toolchain
         uses: actions-rs/toolchain@v1
