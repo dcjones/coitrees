@@ -23,7 +23,7 @@ variants are implemented to exploit AVX2 instructions on x86-64 cpus
 type is oppurtunistically defined to one of these types if the right instruction
 set is detected. Typically it's necessary to compile with the environment
 variable `RUSTFLAGS="-Ctarget-cpu=native"` set for this to work. The fallback
-implemntation (`BasicCOITree`) supports any platform rust compiles to and
+implementation (`BasicCOITree`) supports any platform rust compiles to and
 remains highly efficient.
 
 # Trying Out

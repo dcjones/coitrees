@@ -14,15 +14,19 @@ repos:
         stages: [commit]
       - id: detect-private-key
         stages: [commit]
-
-  - repo: https://github.com/crate-ci/committed
-    rev: v1.0.20
-    hooks:
-      - id: committed
-        stages: [commit-msg]
+      - id: check-added-large-files
+        args: ["--maxkb=150000"]
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
 
   - repo: https://github.com/doublify/pre-commit-rust
     rev: v1.0
     hooks:
       - id: fmt
       - id: cargo-check
+
+  - repo: https://github.com/crate-ci/typos
+    rev: typos-dict-v0.11.2
+    hooks:
+      - id: typos
+        exclude: "extc|svg|psl|CHANGELOG"

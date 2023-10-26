@@ -38,10 +38,10 @@ dev-packages: ## Install Python development packages for project
 
 .PHONY: cargo-test
 cargo-test: ## Run cargo tests only
-	cargo test 
+	cargo test
 
 .PHONY: test
-test: cargo-test dev-packages install quicktest ## Intall rscannls module and run tests
+test: cargo-test dev-packages install quicktest ## Install rscannls module and run tests
 
 .PHONY: quicktest
 quicktest: ## Run tests on already installed hyperjson module
