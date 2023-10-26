@@ -1,6 +1,11 @@
-[build-system]
-requires = ["maturin>=1.2.1,<2"]
-build-backend = "maturin"
+[tool.poetry]
+name = "coitrees"
+version = "0.3.0"
+description = "Blazingly fast interval tree library"
+authors = [
+    "Yangyang Li <yangyang.li@northwestern.edu>",
+    "Daniel C. Jones <djones3@fredhutch.org>",
+]
 
 [project]
 name = "coitrees"
@@ -29,3 +34,24 @@ classifiers = [
     "Programming Language :: Rust",
     "Topic :: Scientific/Engineering",
 ]
+
+
+[tool.poetry.dependencies]
+python = "^3.8"
+
+[tool.poetry.group.dev.dependencies]
+pytest-sugar = "^0.9.7"
+pytest = "^7.4.3"
+ruff = "^0.1.3"
+ipdb = "^0.13.13"
+
+
+[project.urls]
+homepage = "https://github.com/dcjones/coitrees"
+documentation = "https://github.com/dcjones/coitrees"
+repository = "https://github.com/dcjones/coitrees"
+changelog = "https://github.com/dcjones/coitrees/README.md"
+
+[build-system]
+requires = ["maturin>=1.2.1,<2"]
+build-backend = "maturin"
