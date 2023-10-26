@@ -1,6 +1,7 @@
+"""coitrees package."""
 from .coitrees import sum_as_string
 
 
-def test_sum_as_string():
-    result = sum_as_string(1, 2)
-    print(result)
+def sum_as_string_add_2(a, b):
+    """Add 2 to the result of sum_as_string."""
+    return sum_as_string(a, b) + "2"
