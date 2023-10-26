@@ -11,7 +11,7 @@
 //! structs which store integer, end-inclusive intervals along with associated
 //! metadata. The tree can be queried directly for coverage or overlaps, or
 //! through the intermediary `SortedQuerenty` which keeps track of some state
-//! to accelerate overlaping queries.
+//! to accelerate overlapping queries.
 
 mod interval;
 pub use interval::*;

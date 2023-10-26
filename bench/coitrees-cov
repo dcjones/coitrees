@@ -1,4 +1,3 @@
 #!/bin/sh
 
 ../target/release/examples/bed-intersect --coverage $1 $2
-

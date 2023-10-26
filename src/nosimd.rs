@@ -11,7 +11,7 @@
 //! structs which store integer, end-inclusive intervals along with associated
 //! metadata. The tree can be queried directly for coverage or overlaps, or
 //! through the intermediary `SortedQuerent` which keeps track of some state
-//! to accelerate overlaping queries.
+//! to accelerate overlapping queries.
 
 use super::interval::{GenericInterval, IntWithMax, Interval, IntervalTree, SortedQuerent};
 use std::cmp::Ordering;
@@ -190,7 +190,7 @@ where
         self.nodes.is_empty()
     }
 
-    /// Find intervals in the set overlaping the query `[first, last]` and call `visit` on every overlapping node
+    /// Find intervals in the set overlapping the query `[first, last]` and call `visit` on every overlapping node
     fn query<F>(&'a self, first: i32, last: i32, mut visit: F)
     where
         F: FnMut(&IntervalNode<T, I>),
@@ -547,7 +547,7 @@ where
             return;
         }
 
-        // not overlaping or preceding
+        // not overlapping or preceding
         if first < self.prev_first || first > self.prev_last {
             // no overlap with previous query. have to resort to regular query strategy
             self.overlapping_intervals.clear();
