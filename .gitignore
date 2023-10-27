@@ -9,6 +9,8 @@ bench/random-cov-bench.csv
 bench/*.bed
 data/
 
+# idea
+.idea/
 
 # Python binding ignore
 # Byte-compiled / optimized / DLL files
