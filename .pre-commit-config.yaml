@@ -25,14 +25,8 @@ repos:
       - id: fmt
       - id: cargo-check
 
-  - repo: https://github.com/crate-ci/typos
-    rev: typos-dict-v0.11.2
-    hooks:
-      - id: typos
-        exclude: "extc|svg|psl|CHANGELOG"
-
   - repo: https://github.com/charliermarsh/ruff-pre-commit
-    rev: "v0.1.2"
+    rev: "v0.1.5"
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix, --unsafe-fixes]
