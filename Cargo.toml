@@ -9,6 +9,9 @@ documentation = "https://docs.rs/coitrees"
 readme = "README.md"
 license-file = "LICENSE"
 
+[lib]
+crate-type = ["cdylib"]
+
 [profile.release]
 debug = 0
 strip = "symbols"
