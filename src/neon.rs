@@ -275,6 +275,7 @@ fn count_bits(bits: uint32x4_t) -> usize {
 /// The index type `I` is a typically `usize`, but can be `u32` or `u16`.
 /// It's slightly more efficient to use a smalled index type, assuming there are
 /// fewer than I::MAX-1 intervals to store.
+#[derive(Clone)]
 pub struct NeonCOITree<T, I>
 where
     T: Clone,
