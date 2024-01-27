@@ -383,6 +383,7 @@ where
 /// The index type `I` is a typically `usize`, but can be `u32` or `u16`.
 /// It's slightly more efficient to use a smalled index type, assuming there are
 /// fewer than I::MAX-1 intervals to store.
+#[derive(Clone)]
 pub struct AVXCOITree<T, I>
 where
     T: Clone,
