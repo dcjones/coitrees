@@ -508,8 +508,8 @@ where
         let node = &self.nodes[self.i];
         if self.j < LANE_SIZE {
             let ret = Some(Interval {
-                first: node.first(self.j),
-                last: node.last(self.j),
+                first: node.first(self.j) + 1,
+                last: node.last(self.j) - 1,
                 metadata: &node.metadata[self.j],
             });
             self.count += 1;
@@ -548,8 +548,8 @@ where
         let node = &self.nodes[self.i];
         self.count += 1;
         Some(Interval {
-            first: node.first(self.j),
-            last: node.last(self.j),
+            first: node.first(self.j) + 1,
+            last: node.last(self.j) - 1,
             metadata: &node.metadata[self.j],
         })
     }
