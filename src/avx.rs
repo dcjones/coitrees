@@ -485,7 +485,7 @@ where
         self.nodes.is_empty()
     }
 
-    // /// Find intervals in the set overlaping the query `[first, last]` and call `visit` on every overlapping node
+    // /// Find intervals in the set overlapping the query `[first, last]` and call `visit` on every overlapping node
     fn query<F>(&'a self, first: i32, last: i32, mut visit: F)
     where
         F: FnMut(&Interval<&'a T>),
@@ -612,8 +612,8 @@ where
         let node = &self.nodes[self.i];
         if self.j < 8 {
             let ret = Some(Interval {
-                first: node.first(self.j),
-                last: node.last(self.j),
+                first: node.first(self.j) + 1,
+                last: node.last(self.j) - 1,
                 metadata: &node.metadata[self.j],
             });
             self.count += 1;
@@ -652,8 +652,8 @@ where
         let node = &self.nodes[self.i];
         self.count += 1;
         Some(Interval {
-            first: node.first(self.j),
-            last: node.last(self.j),
+            first: node.first(self.j) + 1,
+            last: node.last(self.j) - 1,
             metadata: &node.metadata[self.j],
         })
     }
@@ -902,7 +902,7 @@ where
             return;
         }
 
-        // not overlaping or preceding
+        // not overlapping or preceding
         if first < self.prev_first || first > self.prev_last {
             // no overlap with previous query. have to resort to regular query strategy
             self.overlapping_intervals.clear();
