@@ -149,6 +149,10 @@ impl IntWithMax for usize {
     const MAX: usize = usize::MAX;
 }
 
+impl IntWithMax for u64 {
+    const MAX: u64 = u64::MAX;
+}
+
 impl IntWithMax for u32 {
     const MAX: u32 = u32::MAX;
 }
