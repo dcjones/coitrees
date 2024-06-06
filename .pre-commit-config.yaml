@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.4.0
+    rev: v4.5.0
     hooks:
       - id: check-yaml
         stages: [commit]
@@ -14,15 +14,22 @@ repos:
         stages: [commit]
       - id: detect-private-key
         stages: [commit]
-
-  - repo: https://github.com/crate-ci/committed
-    rev: v1.0.18
-    hooks:
-      - id: committed
-        stages: [commit-msg]
+      - id: check-added-large-files
+        args: ["--maxkb=150000"]
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
 
   - repo: https://github.com/doublify/pre-commit-rust
     rev: v1.0
     hooks:
       - id: fmt
       - id: cargo-check
+
+  - repo: https://github.com/charliermarsh/ruff-pre-commit
+    rev: "v0.1.5"
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix, --unsafe-fixes]
+        files: ^py-coitrees/
+      - id: ruff-format
+        files: ^py-coitrees/

@@ -1,4 +1,3 @@
 #!/bin/sh
 
 bedtools coverage -counts -sorted -a $1 -b $2
-
